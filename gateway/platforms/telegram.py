@@ -246,8 +246,8 @@ class TelegramAdapter(BasePlatformAdapter):
         self._dm_topics_config: List[Dict[str, Any]] = self.config.extra.get("dm_topics", [])
         # Interactive model picker state per chat
         self._model_picker_state: Dict[str, dict] = {}
-        # Approval button state: message_id → session_key
-        self._approval_state: Dict[int, str] = {}
+        # Approval button state: approval_id → {"session_key": ..., "choices": [...]}
+        self._approval_state: Dict[int, Any] = {}
 
     @staticmethod
     def _is_callback_user_authorized(user_id: str) -> bool:
@@ -1081,8 +1081,12 @@ class TelegramAdapter(BasePlatformAdapter):
         chat_id: str,
         message_id: str,
         content: str,
+        *,
+        finalize: bool = False,
     ) -> SendResult:
         """Edit a previously sent Telegram message."""
+        # Telegram edits have no explicit finalize state; accept the keyword
+        # for streaming interface compatibility and ignore it.
         if not self._bot:
             return SendResult(success=False, error="Not connected")
         try:
@@ -1207,9 +1211,18 @@ class TelegramAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="Not connected")
 
         try:
+            metadata = dict(metadata or {})
             cmd_preview = command[:3800] + "..." if len(command) > 3800 else command
+            title = str(metadata.get("approval_title") or "Command Approval Required")
+            choices = [
+                str(choice).strip().lower()
+                for choice in (metadata.get("approval_choices") or ["once", "session", "always", "deny"])
+                if str(choice).strip()
+            ]
+            if not choices:
+                choices = ["once", "session", "always", "deny"]
             text = (
-                f"⚠️ <b>Command Approval Required</b>\n\n"
+                f"⚠️ <b>{_html.escape(title)}</b>\n\n"
                 f"<pre>{_html.escape(cmd_preview)}</pre>\n\n"
                 f"Reason: {_html.escape(description)}"
             )
@@ -1225,16 +1238,25 @@ class TelegramAdapter(BasePlatformAdapter):
                 self._approval_counter = itertools.count(1)
             approval_id = next(self._approval_counter)
 
-            keyboard = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("✅ Allow Once", callback_data=f"ea:once:{approval_id}"),
-                    InlineKeyboardButton("✅ Session", callback_data=f"ea:session:{approval_id}"),
-                ],
-                [
-                    InlineKeyboardButton("✅ Always", callback_data=f"ea:always:{approval_id}"),
-                    InlineKeyboardButton("❌ Deny", callback_data=f"ea:deny:{approval_id}"),
-                ],
-            ])
+            button_specs = {
+                "once": ("✅ Allow Once", "primary"),
+                "session": ("✅ Session", "primary"),
+                "always": ("✅ Always", "primary"),
+                "deny": ("❌ Deny", "danger"),
+            }
+            rows = []
+            current_row = []
+            for choice in choices:
+                label, _style = button_specs.get(choice, (choice.title(), "primary"))
+                current_row.append(
+                    InlineKeyboardButton(label, callback_data=f"ea:{choice}:{approval_id}")
+                )
+                if len(current_row) == 2:
+                    rows.append(current_row)
+                    current_row = []
+            if current_row:
+                rows.append(current_row)
+            keyboard = InlineKeyboardMarkup(rows)
 
             kwargs: Dict[str, Any] = {
                 "chat_id": int(chat_id),
@@ -1249,8 +1271,11 @@ class TelegramAdapter(BasePlatformAdapter):
 
             msg = await self._bot.send_message(**kwargs)
 
-            # Store session_key keyed by approval_id for the callback handler
-            self._approval_state[approval_id] = session_key
+            # Store session state keyed by approval_id for the callback handler
+            self._approval_state[approval_id] = {
+                "session_key": session_key,
+                "choices": choices,
+            }
 
             return SendResult(success=True, message_id=str(msg.message_id))
         except Exception as e:
@@ -1586,10 +1611,24 @@ class TelegramAdapter(BasePlatformAdapter):
                     await query.answer(text="⛔ You are not authorized to approve commands.")
                     return
 
-                session_key = self._approval_state.pop(approval_id, None)
-                if not session_key:
+                state = self._approval_state.get(approval_id)
+                if not state:
                     await query.answer(text="This approval has already been resolved.")
                     return
+                if isinstance(state, str):
+                    session_key = state
+                    allowed_choices = {"once", "session", "always", "deny"}
+                else:
+                    session_key = str(state.get("session_key") or "")
+                    allowed_choices = {
+                        str(item).strip().lower()
+                        for item in (state.get("choices") or ["once", "session", "always", "deny"])
+                        if str(item).strip()
+                    }
+                if choice not in allowed_choices:
+                    await query.answer(text="This approval option is not allowed.")
+                    return
+                self._approval_state.pop(approval_id, None)
 
                 # Map choice to human-readable label
                 label_map = {

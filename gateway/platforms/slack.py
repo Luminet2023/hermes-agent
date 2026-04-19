@@ -96,6 +96,7 @@ class SlackAdapter(BasePlatformAdapter):
         # Track pending approval message_ts → resolved flag to prevent
         # double-clicks on approval buttons.
         self._approval_resolved: Dict[str, bool] = {}
+        self._approval_state: Dict[str, Dict[str, Any]] = {}
         # Track timestamps of messages sent by the bot so we can respond
         # to thread replies even without an explicit @mention.
         self._bot_message_ts: set = set()
@@ -1233,8 +1234,42 @@ class SlackAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="Not connected")
 
         try:
+            metadata = dict(metadata or {})
             cmd_preview = command[:2900] + "..." if len(command) > 2900 else command
             thread_ts = self._resolve_thread_ts(None, metadata)
+            title = str(metadata.get("approval_title") or "Command Approval Required")
+            choices = [
+                str(choice).strip().lower()
+                for choice in (metadata.get("approval_choices") or ["once", "session", "always", "deny"])
+                if str(choice).strip()
+            ] or ["once", "session", "always", "deny"]
+
+            button_specs = {
+                "once": {
+                    "text": {"type": "plain_text", "text": "Allow Once"},
+                    "style": "primary",
+                    "action_id": "hermes_approve_once",
+                },
+                "session": {
+                    "text": {"type": "plain_text", "text": "Allow Session"},
+                    "action_id": "hermes_approve_session",
+                },
+                "always": {
+                    "text": {"type": "plain_text", "text": "Always Allow"},
+                    "action_id": "hermes_approve_always",
+                },
+                "deny": {
+                    "text": {"type": "plain_text", "text": "Deny"},
+                    "style": "danger",
+                    "action_id": "hermes_deny",
+                },
+            }
+            elements = []
+            for choice in choices:
+                spec = dict(button_specs[choice])
+                spec["type"] = "button"
+                spec["value"] = session_key
+                elements.append(spec)
 
             blocks = [
                 {
@@ -1242,7 +1277,7 @@ class SlackAdapter(BasePlatformAdapter):
                     "text": {
                         "type": "mrkdwn",
                         "text": (
-                            f":warning: *Command Approval Required*\n"
+                            f":warning: *{title}*\n"
                             f"```{cmd_preview}```\n"
                             f"Reason: {description}"
                         ),
@@ -1250,34 +1285,7 @@ class SlackAdapter(BasePlatformAdapter):
                 },
                 {
                     "type": "actions",
-                    "elements": [
-                        {
-                            "type": "button",
-                            "text": {"type": "plain_text", "text": "Allow Once"},
-                            "style": "primary",
-                            "action_id": "hermes_approve_once",
-                            "value": session_key,
-                        },
-                        {
-                            "type": "button",
-                            "text": {"type": "plain_text", "text": "Allow Session"},
-                            "action_id": "hermes_approve_session",
-                            "value": session_key,
-                        },
-                        {
-                            "type": "button",
-                            "text": {"type": "plain_text", "text": "Always Allow"},
-                            "action_id": "hermes_approve_always",
-                            "value": session_key,
-                        },
-                        {
-                            "type": "button",
-                            "text": {"type": "plain_text", "text": "Deny"},
-                            "style": "danger",
-                            "action_id": "hermes_deny",
-                            "value": session_key,
-                        },
-                    ],
+                    "elements": elements,
                 },
             ]
 
@@ -1293,6 +1301,10 @@ class SlackAdapter(BasePlatformAdapter):
             msg_ts = result.get("ts", "")
             if msg_ts:
                 self._approval_resolved[msg_ts] = False
+                self._approval_state[msg_ts] = {
+                    "session_key": session_key,
+                    "choices": choices,
+                }
 
             return SendResult(success=True, message_id=msg_ts, raw_response=result)
         except Exception as e:
@@ -1332,10 +1344,29 @@ class SlackAdapter(BasePlatformAdapter):
             "hermes_deny": "deny",
         }
         choice = choice_map.get(action_id, "deny")
+        state = self._approval_state.get(msg_ts)
+        if state is None:
+            state = {
+                "session_key": session_key,
+                "choices": ["once", "session", "always", "deny"],
+            }
+        allowed_choices = {
+            str(item).strip().lower()
+            for item in (state.get("choices") or ["once", "session", "always", "deny"])
+            if str(item).strip()
+        }
+        if choice not in allowed_choices:
+            logger.warning(
+                "[Slack] Ignoring disallowed approval choice %s for message %s",
+                choice,
+                msg_ts,
+            )
+            return
 
         # Prevent double-clicks — atomic pop; first caller gets False, others get True (default)
         if self._approval_resolved.pop(msg_ts, True):
             return
+        self._approval_state.pop(msg_ts, None)
 
         # Update the message to show the decision and remove buttons
         label_map = {
@@ -1382,10 +1413,10 @@ class SlackAdapter(BasePlatformAdapter):
         # Resolve the approval — this unblocks the agent thread
         try:
             from tools.approval import resolve_gateway_approval
-            count = resolve_gateway_approval(session_key, choice)
+            count = resolve_gateway_approval(state["session_key"], choice)
             logger.info(
                 "Slack button resolved %d approval(s) for session %s (choice=%s, user=%s)",
-                count, session_key, choice, user_name,
+                count, state["session_key"], choice, user_name,
             )
         except Exception as exc:
             logger.error("Failed to resolve gateway approval from Slack button: %s", exc)

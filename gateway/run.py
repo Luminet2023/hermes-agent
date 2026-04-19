@@ -9485,12 +9485,21 @@ class GatewayRunner:
                     if str(choice).strip()
                 ]
                 default_button_choices = ["once", "session", "always", "deny"]
+                approval_metadata = dict(_status_thread_metadata or {})
+                approval_metadata.update({
+                    "approval_title": title,
+                    "approval_choices": choices,
+                    "approval_kind": approval_data.get("approval_kind", "command"),
+                })
+                button_compatible_choices = bool(choices) and all(
+                    choice in default_button_choices for choice in choices
+                )
 
                 # Prefer button-based approval when the adapter supports it.
                 # Check the *class* for the method, not the instance — avoids
                 # false positives from MagicMock auto-attribute creation in tests.
                 if (
-                    choices == default_button_choices
+                    button_compatible_choices
                     and getattr(type(_status_adapter), "send_exec_approval", None) is not None
                 ):
                     try:
@@ -9500,7 +9509,7 @@ class GatewayRunner:
                                 command=cmd,
                                 session_key=_approval_session_key,
                                 description=desc,
-                                metadata=_status_thread_metadata,
+                                metadata=approval_metadata,
                             ),
                             _loop_for_step,
                         ).result(timeout=15)

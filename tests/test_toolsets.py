@@ -198,12 +198,20 @@ class TestToolsetConsistency:
                 assert inc in TOOLSETS, f"{name} includes unknown toolset '{inc}'"
 
     def test_hermes_platforms_share_core_tools(self):
-        """All hermes-* platform toolsets should have the same tools."""
-        platforms = ["hermes-cli", "hermes-telegram", "hermes-discord", "hermes-whatsapp", "hermes-slack", "hermes-signal", "hermes-homeassistant"]
+        """Messaging platform toolsets should continue sharing the same core tools."""
+        platforms = ["hermes-telegram", "hermes-discord", "hermes-whatsapp", "hermes-slack", "hermes-signal", "hermes-homeassistant"]
         tool_sets = [set(TOOLSETS[p]["tools"]) for p in platforms]
-        # All platform toolsets should be identical
         for ts in tool_sets[1:]:
             assert ts == tool_sets[0]
+
+    def test_cli_toolset_adds_local_only_privileged_tools(self):
+        cli_tools = set(resolve_toolset("hermes-cli"))
+        telegram_tools = set(resolve_toolset("hermes-telegram"))
+
+        assert "request_privileged_host_action" in cli_tools
+        assert "request_host_mount" in cli_tools
+        assert "request_privileged_host_action" not in telegram_tools
+        assert "request_host_mount" not in telegram_tools
 
 
 class TestPluginToolsets:

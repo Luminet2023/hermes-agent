@@ -26,8 +26,8 @@ Usage:
 from typing import List, Dict, Any, Set, Optional
 
 
-# Shared tool list for CLI and all messaging platform toolsets.
-# Edit this once to update all platforms simultaneously.
+# Shared core tool list for CLI and messaging platform toolsets.
+# Local-development toolsets may extend this with host-only tools.
 _HERMES_CORE_TOOLS = [
     # Web
     "web_search", "web_extract",
@@ -61,6 +61,11 @@ _HERMES_CORE_TOOLS = [
     "send_message",
     # Home Assistant smart home control (gated on HASS_TOKEN via check_fn)
     "ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service",
+]
+
+_HERMES_LOCAL_PRIVILEGED_TOOLS = [
+    "request_privileged_host_action",
+    "request_host_mount",
 ]
 
 
@@ -97,6 +102,8 @@ TOOLSETS = {
         "tools": [
             "terminal", "process",
             "request_host_env", "restore_sandbox_env",
+            "request_privileged_host_action",
+            "request_host_mount",
         ],
         "includes": []
     },
@@ -248,6 +255,8 @@ TOOLSETS = {
             "web_search", "web_extract",
             "terminal", "process",
             "request_host_env", "restore_sandbox_env",
+            "request_privileged_host_action",
+            "request_host_mount",
             "read_file", "write_file", "patch", "search_files",
             "vision_analyze",
             "skills_list", "skill_view", "skill_manage",
@@ -298,7 +307,7 @@ TOOLSETS = {
     
     "hermes-cli": {
         "description": "Full interactive CLI toolset - all default tools plus cronjob management",
-        "tools": _HERMES_CORE_TOOLS,
+        "tools": _HERMES_CORE_TOOLS + _HERMES_LOCAL_PRIVILEGED_TOOLS,
         "includes": []
     },
     

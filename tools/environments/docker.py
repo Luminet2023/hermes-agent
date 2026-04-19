@@ -12,9 +12,11 @@ import shutil
 import subprocess
 import sys
 import uuid
+from dataclasses import dataclass
 from typing import Optional
 
 from tools.environments.base import BaseEnvironment, _popen_bash
+from tools.environments import docker_mounts as _docker_mounts
 from tools.environments.local import _HERMES_PROVIDER_ENV_BLOCKLIST
 
 logger = logging.getLogger(__name__)
@@ -166,6 +168,167 @@ _SECURITY_ARGS = [
 _storage_opt_ok: Optional[bool] = None  # cached result across instances
 
 
+@dataclass(frozen=True)
+class _DockerRunCompatFallback:
+    """A removable docker run arg group for kernel/runtime incompatibilities."""
+
+    name: str
+    description: str
+    pairs: tuple[tuple[str, str], ...]
+    match_terms: tuple[str, ...]
+
+    def matches(self, text: str) -> bool:
+        return bool(self.pairs) and any(term in text for term in self.match_terms)
+
+
+def _collect_flag_pairs(
+    args: list[str],
+    flag: str,
+    *,
+    value_contains: str | None = None,
+) -> tuple[tuple[str, str], ...]:
+    """Collect ``(flag, value)`` pairs from *args* matching *flag*."""
+    pairs: list[tuple[str, str]] = []
+    i = 0
+    while i < len(args) - 1:
+        if args[i] == flag:
+            value = args[i + 1]
+            if value_contains is None or value_contains in value:
+                pairs.append((flag, value))
+            i += 2
+            continue
+        i += 1
+    return tuple(pairs)
+
+
+def _remove_flag_pairs(
+    args: list[str],
+    pairs_to_remove: tuple[tuple[str, str], ...],
+) -> list[str]:
+    """Return *args* without the exact ``(flag, value)`` pairs in *pairs_to_remove*."""
+    if not pairs_to_remove:
+        return list(args)
+
+    pair_set = set(pairs_to_remove)
+    result: list[str] = []
+    i = 0
+    while i < len(args):
+        if i < len(args) - 1 and (args[i], args[i + 1]) in pair_set:
+            i += 2
+            continue
+        result.append(args[i])
+        i += 1
+    return result
+
+
+def _format_process_stream(text: str | None) -> str:
+    text = (text or "").strip()
+    return text if text else "<empty>"
+
+
+def _build_docker_run_compat_fallbacks(all_run_args: list[str]) -> list[_DockerRunCompatFallback]:
+    """Build ordered compatibility fallbacks for unsupported docker flags."""
+    return [
+        _DockerRunCompatFallback(
+            name="no_new_privileges",
+            description="--security-opt no-new-privileges",
+            pairs=_collect_flag_pairs(
+                all_run_args,
+                "--security-opt",
+                value_contains="no-new-privileges",
+            ),
+            match_terms=(
+                "no-new-privileges",
+                "no new privileges",
+                "no_new_privs",
+                "pr_set_no_new_privs",
+            ),
+        ),
+        _DockerRunCompatFallback(
+            name="pids_limit",
+            description="--pids-limit",
+            pairs=_collect_flag_pairs(all_run_args, "--pids-limit"),
+            match_terms=(
+                "pids limit",
+                "pids-limit",
+                "pids.max",
+                "pids cgroup",
+            ),
+        ),
+        _DockerRunCompatFallback(
+            name="tmpfs_mounts",
+            description="docker --tmpfs mounts",
+            pairs=_collect_flag_pairs(all_run_args, "--tmpfs"),
+            match_terms=(
+                'type "tmpfs"',
+                "tmpfs",
+                "mount /tmp",
+                "mount /var/tmp",
+                "mount /run",
+                "mount /workspace",
+                "mount /root",
+                "mount /home",
+            ),
+        ),
+        _DockerRunCompatFallback(
+            name="cpu_limit",
+            description="--cpus",
+            pairs=_collect_flag_pairs(all_run_args, "--cpus"),
+            match_terms=(
+                "cpu cfs",
+                "cpu quota",
+                "cpu.max",
+                "nano cpus",
+            ),
+        ),
+        _DockerRunCompatFallback(
+            name="memory_limit",
+            description="--memory",
+            pairs=_collect_flag_pairs(all_run_args, "--memory"),
+            match_terms=(
+                "memory cgroup",
+                "memory limit",
+                "memory.max",
+            ),
+        ),
+    ]
+
+
+def _best_effort_remove_failed_container(docker_exe: str, container_name: str) -> None:
+    """Best-effort cleanup of a partially created failed container."""
+    try:
+        subprocess.run(
+            [docker_exe, "rm", "-f", container_name],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except Exception:
+        logger.debug(
+            "Docker: failed to clean up partial container %s after startup error",
+            container_name,
+            exc_info=True,
+        )
+
+
+def _format_docker_run_error(
+    *,
+    returncode: int,
+    stdout: str | None,
+    stderr: str | None,
+    disabled_fallbacks: list[str],
+) -> str:
+    parts = [f"Docker sandbox creation failed (exit code {returncode})."]
+    if disabled_fallbacks:
+        parts.append(
+            "Compatibility retries attempted by removing: "
+            + ", ".join(disabled_fallbacks)
+        )
+    parts.append(f"docker stdout:\n{_format_process_stream(stdout)}")
+    parts.append(f"docker stderr:\n{_format_process_stream(stderr)}")
+    return "\n\n".join(parts)
+
+
 def _ensure_docker_available() -> None:
     """Best-effort check that the docker CLI is available before use.
 
@@ -269,6 +432,9 @@ class DockerEnvironment(BaseEnvironment):
         self._forward_env = _normalize_forward_env_names(forward_env)
         self._env = _normalize_env_dict(env)
         self._container_id: Optional[str] = None
+        self._mount_hub_host_path: Optional[str] = None
+        self._mount_hub_container_path: Optional[str] = None
+        self._mount_helper_mode: Optional[str] = None
         logger.info(f"DockerEnvironment volumes: {volumes}")
         # Ensure volumes is a list (config.yaml could be malformed)
         if volumes is not None and not isinstance(volumes, list):
@@ -277,6 +443,12 @@ class DockerEnvironment(BaseEnvironment):
 
         # Fail fast if Docker is not available.
         _ensure_docker_available()
+
+        mount_runtime = _docker_mounts.prepare_task_mount_runtime(task_id)
+        if mount_runtime is not None:
+            self._mount_hub_host_path = str(mount_runtime["hub_host_path"])
+            self._mount_hub_container_path = str(mount_runtime["hub_container_path"])
+            self._mount_helper_mode = str(mount_runtime["helper_mode"])
 
         # Build resource limit args
         resource_args = []
@@ -415,6 +587,12 @@ class DockerEnvironment(BaseEnvironment):
         for key in sorted(self._env):
             env_args.extend(["-e", f"{key}={self._env[key]}"])
 
+        if mount_runtime is not None:
+            volume_args.extend([
+                "--mount",
+                _docker_mounts.build_hub_mount_arg(mount_runtime),
+            ])
+
         logger.info(f"Docker volume_args: {volume_args}")
         all_run_args = list(_SECURITY_ARGS) + writable_args + resource_args + volume_args + env_args
         logger.info(f"Docker run_args: {all_run_args}")
@@ -425,33 +603,123 @@ class DockerEnvironment(BaseEnvironment):
 
         # Start the container directly via `docker run -d`.
         container_name = f"hermes-{uuid.uuid4().hex[:8]}"
-        run_cmd = [
-            self._docker_exe, "run", "-d",
-            "--init",           # tini/catatonit as PID 1 — reaps zombie children
-            "--name", container_name,
-            "-w", cwd,
-            *all_run_args,
-            image,
-            "sleep", "infinity",  # no fixed lifetime — idle reaper handles cleanup
-        ]
-        logger.debug(f"Starting container: {' '.join(run_cmd)}")
-        result = subprocess.run(
-            run_cmd,
-            capture_output=True,
-            text=True,
-            timeout=120,  # image pull may take a while
-            check=True,
-        )
-        self._container_id = result.stdout.strip()
-        logger.info(f"Started container {container_name} ({self._container_id[:12]})")
+        compat_fallbacks = _build_docker_run_compat_fallbacks(all_run_args)
+        disabled_fallbacks: list[str] = []
+        current_run_args = list(all_run_args)
+        try:
+            while True:
+                run_cmd = [
+                    self._docker_exe, "run", "-d",
+                    "--init",           # tini/catatonit as PID 1 — reaps zombie children
+                    "--name", container_name,
+                    "-w", cwd,
+                    *current_run_args,
+                    image,
+                    "sleep", "infinity",  # no fixed lifetime — idle reaper handles cleanup
+                ]
+                logger.debug(f"Starting container: {' '.join(run_cmd)}")
+                try:
+                    result = subprocess.run(
+                        run_cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=120,  # image pull may take a while
+                    )
+                except subprocess.TimeoutExpired as e:
+                    logger.error(
+                        "Docker run timed out after %ss for image %s\nstdout:\n%s\nstderr:\n%s",
+                        e.timeout,
+                        image,
+                        _format_process_stream(getattr(e, "stdout", None)),
+                        _format_process_stream(getattr(e, "stderr", None)),
+                    )
+                    raise RuntimeError(
+                        "Docker sandbox creation timed out.\n\n"
+                        f"docker stdout:\n{_format_process_stream(getattr(e, 'stdout', None))}\n\n"
+                        f"docker stderr:\n{_format_process_stream(getattr(e, 'stderr', None))}"
+                    ) from e
 
-        # Build the init-time env forwarding args (used only by init_session
-        # to inject host env vars into the snapshot; subsequent commands get
-        # them from the snapshot file).
-        self._init_env_args = self._build_init_env_args()
+                if result.returncode == 0:
+                    if disabled_fallbacks:
+                        logger.warning(
+                            "Docker sandbox started after removing incompatible runtime flags: %s",
+                            ", ".join(disabled_fallbacks),
+                        )
+                    break
 
-        # Initialize session snapshot inside the container
-        self.init_session()
+                stdout_text = _format_process_stream(result.stdout)
+                stderr_text = _format_process_stream(result.stderr)
+                combined_text = "\n".join(
+                    part for part in (result.stdout, result.stderr) if part
+                ).lower()
+                logger.error(
+                    "Docker run failed (exit code %d)\nstdout:\n%s\nstderr:\n%s",
+                    result.returncode,
+                    stdout_text,
+                    stderr_text,
+                )
+
+                fallback = next(
+                    (
+                        option for option in compat_fallbacks
+                        if option.name not in disabled_fallbacks and option.matches(combined_text)
+                    ),
+                    None,
+                )
+                if not fallback:
+                    raise RuntimeError(
+                        _format_docker_run_error(
+                            returncode=result.returncode,
+                            stdout=result.stdout,
+                            stderr=result.stderr,
+                            disabled_fallbacks=disabled_fallbacks,
+                        )
+                    )
+
+                next_run_args = _remove_flag_pairs(current_run_args, fallback.pairs)
+                if next_run_args == current_run_args:
+                    raise RuntimeError(
+                        _format_docker_run_error(
+                            returncode=result.returncode,
+                            stdout=result.stdout,
+                            stderr=result.stderr,
+                            disabled_fallbacks=disabled_fallbacks,
+                        )
+                    )
+
+                disabled_fallbacks.append(fallback.description)
+                logger.warning(
+                    "Retrying docker run without %s after daemon reported an unsupported runtime option",
+                    fallback.description,
+                )
+                _best_effort_remove_failed_container(self._docker_exe, container_name)
+                current_run_args = next_run_args
+
+            self._container_id = result.stdout.strip()
+            logger.info(f"Started container {container_name} ({self._container_id[:12]})")
+
+            # Build the init-time env forwarding args (used only by init_session
+            # to inject host env vars into the snapshot; subsequent commands get
+            # them from the snapshot file).
+            self._init_env_args = self._build_init_env_args()
+
+            # Initialize session snapshot inside the container
+            self.init_session()
+        except Exception as exc:
+            if self._container_id:
+                _best_effort_remove_failed_container(self._docker_exe, self._container_id)
+            else:
+                _best_effort_remove_failed_container(self._docker_exe, container_name)
+            self._container_id = None
+            self._init_env_args = []
+            if mount_runtime is not None:
+                try:
+                    _docker_mounts.cleanup_task_mounts(task_id, strict=True)
+                except Exception as cleanup_exc:
+                    raise RuntimeError(
+                        f"{exc}\n\nDynamic mount hub rollback also failed: {cleanup_exc}"
+                    ) from exc
+            raise
 
     def _build_init_env_args(self) -> list[str]:
         """Build -e KEY=VALUE args for injecting host env vars into init_session.
@@ -550,6 +818,15 @@ class DockerEnvironment(BaseEnvironment):
 
     def cleanup(self):
         """Stop and remove the container. Bind-mount dirs persist if persistent=True."""
+        try:
+            _docker_mounts.cleanup_task_mounts(self._task_id, strict=False)
+        except Exception:
+            logger.warning(
+                "Best-effort dynamic mount cleanup failed for task %s",
+                self._task_id,
+                exc_info=True,
+            )
+
         if self._container_id:
             try:
                 # Stop in background so cleanup doesn't block

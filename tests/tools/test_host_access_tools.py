@@ -188,6 +188,47 @@ def test_file_tools_cache_invalidates_on_switch_and_restore(monkeypatch):
     assert ops_docker_restored is not ops_local
 
 
+def test_request_host_env_uses_strict_cleanup_for_dynamic_mounts(monkeypatch):
+    monkeypatch.setenv("TERMINAL_ENV", "docker")
+    monkeypatch.setattr(host_access_tools, "request_operation_approval", _approved_once)
+
+    cleanup_calls = []
+    monkeypatch.setattr(
+        terminal_tool,
+        "cleanup_vm",
+        lambda task_id, strict_mount_cleanup=False: cleanup_calls.append((task_id, strict_mount_cleanup)),
+    )
+    monkeypatch.setattr(file_tools, "clear_file_ops_cache", lambda *_args, **_kwargs: None)
+
+    result = json.loads(host_access_tools.request_host_env("task-strict-cleanup"))
+
+    assert result["success"] is True
+    assert cleanup_calls == [("task-strict-cleanup", True)]
+
+
+def test_request_host_env_cleanup_failure_keeps_overrides_and_cache(monkeypatch):
+    monkeypatch.setenv("TERMINAL_ENV", "docker")
+    monkeypatch.setattr(host_access_tools, "request_operation_approval", _approved_once)
+    monkeypatch.setattr(
+        terminal_tool,
+        "cleanup_vm",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("mount cleanup failed")),
+    )
+
+    with file_tools._file_ops_lock:
+        sentinel = object()
+        file_tools._file_ops_cache["task-cleanup-fail"] = sentinel
+
+    result = json.loads(host_access_tools.request_host_env("task-cleanup-fail"))
+
+    assert result["success"] is False
+    assert result["changed"] is False
+    assert "mount cleanup failed" in result["message"]
+    assert task_env_state.get_task_env_overrides("task-cleanup-fail") == {}
+    with file_tools._file_ops_lock:
+        assert file_tools._file_ops_cache["task-cleanup-fail"] is sentinel
+
+
 @pytest.mark.parametrize(
     "approval_result",
     [

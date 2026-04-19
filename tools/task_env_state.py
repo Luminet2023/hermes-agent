@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import copy
 import threading
 from typing import Any, Dict
 
 
 _task_env_lock = threading.RLock()
 _task_env_overrides: Dict[str, Dict[str, Any]] = {}
+_DOCKER_MOUNT_RUNTIME_KEY = "docker_mount_runtime"
 
 _IMAGE_KEY_BY_ENV = {
     "docker": "docker_image",
@@ -62,6 +64,30 @@ def remove_task_env_override_keys(task_id: str, *keys: str) -> Dict[str, Any]:
         else:
             _task_env_overrides.pop(task_id, None)
         return dict(current)
+
+
+def get_task_docker_mount_runtime(task_id: str) -> Dict[str, Any] | None:
+    """Return a deep copy of the current Docker mount runtime for *task_id*."""
+    task_id = task_id or "default"
+    with _task_env_lock:
+        runtime = _task_env_overrides.get(task_id, {}).get(_DOCKER_MOUNT_RUNTIME_KEY)
+        if runtime is None:
+            return None
+        return copy.deepcopy(runtime)
+
+
+def set_task_docker_mount_runtime(task_id: str, runtime: Dict[str, Any]) -> None:
+    """Persist Docker dynamic mount runtime metadata for *task_id*."""
+    task_id = task_id or "default"
+    with _task_env_lock:
+        current = dict(_task_env_overrides.get(task_id, {}))
+        current[_DOCKER_MOUNT_RUNTIME_KEY] = copy.deepcopy(runtime)
+        _task_env_overrides[task_id] = current
+
+
+def clear_task_docker_mount_runtime(task_id: str) -> None:
+    """Remove Docker dynamic mount runtime metadata for *task_id*."""
+    remove_task_env_override_keys(task_id or "default", _DOCKER_MOUNT_RUNTIME_KEY)
 
 
 def _load_base_config_for_env_type(env_type: str | None = None) -> Dict[str, Any]:
