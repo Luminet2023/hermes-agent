@@ -120,6 +120,36 @@ class TestSlackExecApproval:
         assert kwargs.get("thread_ts") == "9999.0000"
 
     @pytest.mark.asyncio
+    async def test_operation_approval_uses_custom_title_and_one_shot_buttons(self):
+        adapter = _make_adapter()
+        mock_client = adapter._team_clients["T1"]
+        mock_client.chat_postMessage = AsyncMock(return_value={"ts": "1234.5678"})
+
+        await adapter.send_exec_approval(
+            chat_id="C1",
+            command="switch task abc from docker to host/local execution",
+            session_key="operation-session",
+            description="Allow this task to leave Docker and run on the host.",
+            metadata={
+                "approval_title": "Host Environment Approval",
+                "approval_choices": ["once", "deny"],
+            },
+        )
+
+        kwargs = mock_client.chat_postMessage.call_args[1]
+        blocks = kwargs["blocks"]
+        assert "Host Environment Approval" in blocks[0]["text"]["text"]
+        elements = blocks[1]["elements"]
+        assert [element["action_id"] for element in elements] == [
+            "hermes_approve_once",
+            "hermes_deny",
+        ]
+        assert adapter._approval_state["1234.5678"] == {
+            "session_key": "operation-session",
+            "choices": ["once", "deny"],
+        }
+
+    @pytest.mark.asyncio
     async def test_not_connected(self):
         adapter = _make_adapter()
         adapter._app = None
@@ -235,6 +265,31 @@ class TestSlackApprovalAction:
         mock_resolve.assert_called_once_with("session-key", "deny")
         update_kwargs = mock_client.chat_update.call_args[1]
         assert "Denied by alice" in update_kwargs["text"]
+
+    @pytest.mark.asyncio
+    async def test_rejects_disallowed_choice_for_one_shot_operation_approval(self):
+        adapter = _make_adapter()
+        adapter._approval_resolved["9.9"] = False
+        adapter._approval_state["9.9"] = {
+            "session_key": "operation-session",
+            "choices": ["once", "deny"],
+        }
+
+        ack = AsyncMock()
+        body = {
+            "message": {"ts": "9.9", "blocks": []},
+            "channel": {"id": "C1"},
+            "user": {"name": "alice"},
+        }
+        action = {"action_id": "hermes_approve_session", "value": "operation-session"}
+
+        with patch("tools.approval.resolve_gateway_approval") as mock_resolve:
+            await adapter._handle_approval_action(ack, body, action)
+
+        ack.assert_called_once()
+        mock_resolve.assert_not_called()
+        assert adapter._approval_resolved["9.9"] is False
+        assert adapter._approval_state["9.9"]["choices"] == ["once", "deny"]
 
 
 # ===========================================================================

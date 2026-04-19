@@ -59,6 +59,14 @@ class TestHermesApiServerToolset:
         tools = resolve_toolset("hermes-api-server")
         assert "text_to_speech" not in tools
 
+    def test_toolset_excludes_privileged_host_action(self):
+        tools = resolve_toolset("hermes-api-server")
+        assert "request_privileged_host_action" not in tools
+
+    def test_toolset_excludes_host_mount(self):
+        tools = resolve_toolset("hermes-api-server")
+        assert "request_host_mount" not in tools
+
 
 class TestApiServerPlatformConfig:
     def test_platforms_dict_includes_api_server(self):

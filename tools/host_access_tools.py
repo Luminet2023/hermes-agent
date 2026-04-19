@@ -47,7 +47,7 @@ def _cleanup_task_environment(task_id: str) -> None:
     from tools.file_tools import clear_file_ops_cache
     from tools.terminal_tool import cleanup_vm
 
-    cleanup_vm(task_id)
+    cleanup_vm(task_id, strict_mount_cleanup=True)
     clear_file_ops_cache(task_id)
 
 
@@ -102,7 +102,18 @@ def request_host_env(task_id: str | None = None) -> str:
     next_overrides["env_type"] = "local"
     next_overrides["cwd"] = _base_local_cwd()
 
-    _cleanup_task_environment(effective_task_id)
+    try:
+        _cleanup_task_environment(effective_task_id)
+    except Exception as exc:
+        return _json_response({
+            "success": False,
+            "task_id": effective_task_id,
+            "from_env_type": current_env_type,
+            "to_env_type": "local",
+            "approval": approval,
+            "changed": False,
+            "message": f"Failed to clean the current task environment: {exc}",
+        })
     _apply_task_override_state(effective_task_id, next_overrides)
 
     return _json_response({
@@ -152,7 +163,18 @@ def restore_sandbox_env(task_id: str | None = None) -> str:
     else:
         next_overrides.pop("env_type", None)
 
-    _cleanup_task_environment(effective_task_id)
+    try:
+        _cleanup_task_environment(effective_task_id)
+    except Exception as exc:
+        return _json_response({
+            "success": False,
+            "task_id": effective_task_id,
+            "from_env_type": current_env_type,
+            "to_env_type": target_env_type,
+            "approval": {"required": False, "approved": True, "choice": "once"},
+            "changed": False,
+            "message": f"Failed to clean the current task environment: {exc}",
+        })
     _apply_task_override_state(effective_task_id, next_overrides)
 
     return _json_response({

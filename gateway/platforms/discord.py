@@ -2638,6 +2638,7 @@ class DiscordAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="Not connected")
 
         try:
+            metadata = dict(metadata or {})
             # Resolve channel — use thread_id from metadata if present
             target_id = chat_id
             if metadata and metadata.get("thread_id"):
@@ -2650,8 +2651,14 @@ class DiscordAdapter(BasePlatformAdapter):
             # Discord embed description limit is 4096; show full command up to that
             max_desc = 4088
             cmd_display = command if len(command) <= max_desc else command[: max_desc - 3] + "..."
+            title = str(metadata.get("approval_title") or "Command Approval Required")
+            choices = [
+                str(choice).strip().lower()
+                for choice in (metadata.get("approval_choices") or ["once", "session", "always", "deny"])
+                if str(choice).strip()
+            ] or ["once", "session", "always", "deny"]
             embed = discord.Embed(
-                title="⚠️ Command Approval Required",
+                title=f"⚠️ {title}",
                 description=f"```\n{cmd_display}\n```",
                 color=discord.Color.orange(),
             )
@@ -2660,6 +2667,7 @@ class DiscordAdapter(BasePlatformAdapter):
             view = ExecApprovalView(
                 session_key=session_key,
                 allowed_user_ids=self._allowed_user_ids,
+                choices=choices,
             )
 
             msg = await channel.send(embed=embed, view=view)
@@ -3281,17 +3289,56 @@ if DISCORD_AVAILABLE:
         """
         Interactive button view for exec approval of dangerous commands.
 
-        Shows four buttons: Allow Once, Allow Session, Always Allow, Deny.
+        Shows a configurable subset of: Allow Once, Allow Session, Always Allow, Deny.
         Clicking a button calls ``resolve_gateway_approval()`` to unblock the
         waiting agent thread — the same mechanism as the text ``/approve`` flow.
         Only users in the allowed list can click.  Times out after 5 minutes.
         """
 
-        def __init__(self, session_key: str, allowed_user_ids: set):
-            super().__init__(timeout=300)  # 5-minute timeout
+        def __init__(
+            self,
+            session_key: str,
+            allowed_user_ids: set,
+            choices: list[str] | tuple[str, ...] | None = None,
+        ):
+            try:
+                super().__init__(timeout=300)  # 5-minute timeout
+            except TypeError:
+                super().__init__()
             self.session_key = session_key
             self.allowed_user_ids = allowed_user_ids
             self.resolved = False
+            self.allowed_choices = [
+                str(choice).strip().lower()
+                for choice in (choices or ["once", "session", "always", "deny"])
+                if str(choice).strip()
+            ] or ["once", "session", "always", "deny"]
+            if not hasattr(self, "children"):
+                self.children = []
+
+            button_specs = {
+                "once": ("Allow Once", discord.ButtonStyle.green, discord.Color.green(), "Approved once"),
+                "session": ("Allow Session", discord.ButtonStyle.grey, discord.Color.blue(), "Approved for session"),
+                "always": ("Always Allow", discord.ButtonStyle.blurple, discord.Color.purple(), "Approved permanently"),
+                "deny": ("Deny", discord.ButtonStyle.red, discord.Color.red(), "Denied"),
+            }
+
+            for choice in self.allowed_choices:
+                label, style, color, decision_label = button_specs[choice]
+                button = discord.ui.Button(label=label, style=style)
+
+                async def _callback(interaction, *, _choice=choice, _color=color, _label=decision_label):
+                    await self._resolve(interaction, _choice, _color, _label)
+
+                button.callback = _callback
+                self._append_item(button)
+
+        def _append_item(self, item) -> None:
+            base_add_item = getattr(super(ExecApprovalView, self), "add_item", None)
+            if callable(base_add_item):
+                base_add_item(item)
+            else:
+                self.children.append(item)
 
         def _check_auth(self, interaction: discord.Interaction) -> bool:
             """Verify the user clicking is authorized."""
@@ -3313,6 +3360,11 @@ if DISCORD_AVAILABLE:
             if not self._check_auth(interaction):
                 await interaction.response.send_message(
                     "You're not authorized to approve commands~", ephemeral=True
+                )
+                return
+            if choice not in set(self.allowed_choices):
+                await interaction.response.send_message(
+                    "This approval option is not allowed~", ephemeral=True
                 )
                 return
 
@@ -3340,30 +3392,6 @@ if DISCORD_AVAILABLE:
                 )
             except Exception as exc:
                 logger.error("Failed to resolve gateway approval from button: %s", exc)
-
-        @discord.ui.button(label="Allow Once", style=discord.ButtonStyle.green)
-        async def allow_once(
-            self, interaction: discord.Interaction, button: discord.ui.Button
-        ):
-            await self._resolve(interaction, "once", discord.Color.green(), "Approved once")
-
-        @discord.ui.button(label="Allow Session", style=discord.ButtonStyle.grey)
-        async def allow_session(
-            self, interaction: discord.Interaction, button: discord.ui.Button
-        ):
-            await self._resolve(interaction, "session", discord.Color.blue(), "Approved for session")
-
-        @discord.ui.button(label="Always Allow", style=discord.ButtonStyle.blurple)
-        async def allow_always(
-            self, interaction: discord.Interaction, button: discord.ui.Button
-        ):
-            await self._resolve(interaction, "always", discord.Color.purple(), "Approved permanently")
-
-        @discord.ui.button(label="Deny", style=discord.ButtonStyle.red)
-        async def deny(
-            self, interaction: discord.Interaction, button: discord.ui.Button
-        ):
-            await self._resolve(interaction, "deny", discord.Color.red(), "Denied")
 
         async def on_timeout(self):
             """Handle view timeout -- disable buttons and mark as expired."""

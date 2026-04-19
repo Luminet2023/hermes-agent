@@ -201,6 +201,104 @@ def test_auto_mount_replaces_persistent_workspace_bind(monkeypatch, tmp_path):
     assert "/sandboxes/docker/test-persistent-auto-mount/workspace:/workspace" not in run_args_str
 
 
+def test_dynamic_mount_feature_adds_shared_hub_mount(monkeypatch):
+    monkeypatch.setattr(docker_env, "find_docker", lambda: "/usr/bin/docker")
+    calls = _mock_subprocess_run(monkeypatch)
+
+    prepare_calls = []
+    monkeypatch.setattr(
+        docker_env._docker_mounts,
+        "prepare_task_mount_runtime",
+        lambda task_id: prepare_calls.append(task_id) or {
+            "hub_host_path": "/tmp/hermes-docker-mounts/task/hub",
+            "hub_container_path": "/__hermes_host_mounts",
+            "helper_mode": "host-nsenter",
+        },
+    )
+    monkeypatch.setattr(
+        docker_env._docker_mounts,
+        "build_hub_mount_arg",
+        lambda runtime: (
+            f"type=bind,src={runtime['hub_host_path']},"
+            "dst=/__hermes_host_mounts,bind-propagation=rshared"
+        ),
+    )
+
+    env = _make_dummy_env(task_id="task-dynamic-hub")
+
+    run_calls = [c for c in calls if isinstance(c[0], list) and len(c[0]) >= 2 and c[0][1] == "run"]
+    assert run_calls, "docker run should have been called"
+    run_args = run_calls[0][0]
+    assert prepare_calls == ["task-dynamic-hub"]
+    assert "--mount" in run_args
+    assert (
+        "type=bind,src=/tmp/hermes-docker-mounts/task/hub,"
+        "dst=/__hermes_host_mounts,bind-propagation=rshared"
+    ) in run_args
+    assert env._mount_hub_host_path == "/tmp/hermes-docker-mounts/task/hub"
+    assert env._mount_hub_container_path == "/__hermes_host_mounts"
+    assert env._mount_helper_mode == "host-nsenter"
+
+
+def test_dynamic_mount_feature_disabled_keeps_default_docker_behavior(monkeypatch):
+    monkeypatch.setattr(docker_env, "find_docker", lambda: "/usr/bin/docker")
+    calls = _mock_subprocess_run(monkeypatch)
+    monkeypatch.setattr(docker_env._docker_mounts, "prepare_task_mount_runtime", lambda task_id: None)
+
+    env = _make_dummy_env(task_id="task-no-dynamic-hub")
+
+    run_calls = [c for c in calls if isinstance(c[0], list) and len(c[0]) >= 2 and c[0][1] == "run"]
+    assert run_calls, "docker run should have been called"
+    run_args_str = " ".join(run_calls[0][0])
+    assert "/__hermes_host_mounts" not in run_args_str
+    assert env._mount_hub_host_path is None
+    assert env._mount_hub_container_path is None
+
+
+def test_docker_run_failure_rolls_back_dynamic_mount_runtime(monkeypatch):
+    monkeypatch.setattr(docker_env, "find_docker", lambda: "/usr/bin/docker")
+    monkeypatch.setattr(
+        docker_env._docker_mounts,
+        "prepare_task_mount_runtime",
+        lambda task_id: {
+            "hub_host_path": "/tmp/hermes-docker-mounts/task/hub",
+            "hub_container_path": "/__hermes_host_mounts",
+            "helper_mode": "host-nsenter",
+        },
+    )
+    monkeypatch.setattr(
+        docker_env._docker_mounts,
+        "build_hub_mount_arg",
+        lambda runtime: (
+            f"type=bind,src={runtime['hub_host_path']},"
+            "dst=/__hermes_host_mounts,bind-propagation=rshared"
+        ),
+    )
+    cleanup_calls = []
+    monkeypatch.setattr(
+        docker_env._docker_mounts,
+        "cleanup_task_mounts",
+        lambda task_id, strict=False: cleanup_calls.append((task_id, strict)) or True,
+    )
+
+    def _run(cmd, **kwargs):
+        if isinstance(cmd, list) and len(cmd) >= 2:
+            if cmd[1] == "version":
+                return subprocess.CompletedProcess(cmd, 0, stdout="Docker version", stderr="")
+            if cmd[1] == "run":
+                return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="fatal create error")
+            if cmd[1] == "rm":
+                return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(docker_env.subprocess, "run", _run)
+
+    with pytest.raises(RuntimeError, match="Docker sandbox creation failed"):
+        _make_dummy_env(task_id="task-run-failure")
+
+    assert ("task-run-failure", True) in cleanup_calls
+
+
 def test_non_persistent_cleanup_removes_container(monkeypatch):
     """When persistent=false, cleanup() must schedule docker stop + rm."""
     monkeypatch.setattr(docker_env, "find_docker", lambda: "/usr/bin/docker")
@@ -382,3 +480,77 @@ def test_normalize_env_dict_rejects_complex_values():
         "BAD_DICT": {"nested": True},
     })
     assert result == {"GOOD": "string"}
+
+
+def test_docker_run_retries_with_minimal_compat_fallbacks(monkeypatch, caplog):
+    """Unsupported kernel sandbox flags should be removed one group at a time."""
+    monkeypatch.setattr(docker_env, "find_docker", lambda: "/usr/bin/docker")
+    monkeypatch.setattr(docker_env.DockerEnvironment, "init_session", lambda self: None)
+
+    run_attempts = []
+    cleanup_attempts = []
+
+    def _run(cmd, **kwargs):
+        cmd_list = list(cmd) if isinstance(cmd, list) else cmd
+        if isinstance(cmd_list, list) and len(cmd_list) >= 2:
+            if cmd_list[1] == "version":
+                return subprocess.CompletedProcess(cmd_list, 0, stdout="Docker version", stderr="")
+            if cmd_list[1] == "rm":
+                cleanup_attempts.append(cmd_list)
+                return subprocess.CompletedProcess(cmd_list, 0, stdout="", stderr="")
+            if cmd_list[1] == "run":
+                run_attempts.append(cmd_list)
+                if len(run_attempts) == 1:
+                    return subprocess.CompletedProcess(
+                        cmd_list,
+                        125,
+                        stdout="",
+                        stderr="OCI runtime create failed: prctl(PR_SET_NO_NEW_PRIVS) failed: invalid argument",
+                    )
+                if len(run_attempts) == 2:
+                    return subprocess.CompletedProcess(
+                        cmd_list,
+                        125,
+                        stdout="",
+                        stderr=(
+                            "Error response from daemon: Your kernel does not support "
+                            "pids limit capabilities or the cgroup is not mounted."
+                        ),
+                    )
+                return subprocess.CompletedProcess(
+                    cmd_list,
+                    0,
+                    stdout="fake-container-id\n",
+                    stderr="",
+                )
+        return subprocess.CompletedProcess(cmd_list, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(docker_env.subprocess, "run", _run)
+
+    with caplog.at_level(logging.WARNING):
+        env = _make_dummy_env()
+
+    assert env._container_id == "fake-container-id"
+    assert len(run_attempts) == 3
+    assert len(cleanup_attempts) == 2
+
+    first_run = " ".join(run_attempts[0])
+    second_run = " ".join(run_attempts[1])
+    third_run = " ".join(run_attempts[2])
+
+    assert "--security-opt no-new-privileges" in first_run
+    assert "--pids-limit 256" in first_run
+
+    assert "--security-opt no-new-privileges" not in second_run
+    assert "--pids-limit 256" in second_run
+    assert "--cap-drop ALL" in second_run
+    assert "--tmpfs /tmp:rw,nosuid,size=512m" in second_run
+
+    assert "--security-opt no-new-privileges" not in third_run
+    assert "--pids-limit 256" not in third_run
+    assert "--cap-drop ALL" in third_run
+    assert "--tmpfs /tmp:rw,nosuid,size=512m" in third_run
+
+    assert "PR_SET_NO_NEW_PRIVS" in caplog.text
+    assert "does not support pids limit capabilities" in caplog.text
+    assert "started after removing incompatible runtime flags" in caplog.text

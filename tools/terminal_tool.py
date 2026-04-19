@@ -812,6 +812,25 @@ def _create_environment(env_type: str, image: str, cwd: str, timeout: int,
         raise ValueError(f"Unknown environment type: {env_type}. Use 'local', 'docker', 'singularity', 'modal', 'daytona', or 'ssh'")
 
 
+def _cleanup_task_mounts(task_id: str, *, strict: bool = False) -> bool:
+    """Clean task-scoped Docker dynamic mounts when configured."""
+    try:
+        from tools.environments.docker_mounts import cleanup_task_mounts as _cleanup_dynamic_mounts
+
+        return _cleanup_dynamic_mounts(task_id, strict=strict)
+    except ImportError:
+        return True
+    except Exception:
+        if strict:
+            raise
+        logger.warning(
+            "Best-effort dynamic mount cleanup failed for task %s",
+            task_id,
+            exc_info=True,
+        )
+        return False
+
+
 def _cleanup_inactive_envs(lifetime_seconds: int = 300):
     """Clean up environments that have been inactive for longer than lifetime_seconds."""
     current_time = time.time()
@@ -857,6 +876,8 @@ def _cleanup_inactive_envs(lifetime_seconds: int = 300):
             pass
 
         try:
+            _cleanup_task_mounts(task_id, strict=False)
+
             if hasattr(env, 'cleanup'):
                 env.cleanup()
             elif hasattr(env, 'stop'):
@@ -963,8 +984,50 @@ def cleanup_all_environments():
     return cleaned
 
 
-def cleanup_vm(task_id: str):
+def cleanup_vm(task_id: str, strict_mount_cleanup: bool = False):
     """Manually clean up a specific environment by task_id."""
+    if strict_mount_cleanup:
+        with _env_lock:
+            env = _active_environments.get(task_id)
+
+        _cleanup_task_mounts(task_id, strict=True)
+
+        if env is not None:
+            try:
+                if hasattr(env, 'cleanup'):
+                    env.cleanup()
+                elif hasattr(env, 'stop'):
+                    env.stop()
+                elif hasattr(env, 'terminate'):
+                    env.terminate()
+            except Exception as exc:
+                error_str = str(exc)
+                if "404" in error_str or "not found" in error_str.lower():
+                    logger.info("Environment for task %s already cleaned up", task_id)
+                else:
+                    raise RuntimeError(
+                        f"Strict environment cleanup failed for task {task_id}: {exc}"
+                    ) from exc
+
+        with _env_lock:
+            tracked_env = _active_environments.get(task_id)
+            if env is None or tracked_env is env:
+                _active_environments.pop(task_id, None)
+                _last_activity.pop(task_id, None)
+
+        with _creation_locks_lock:
+            _creation_locks.pop(task_id, None)
+
+        try:
+            from tools.file_tools import clear_file_ops_cache
+            clear_file_ops_cache(task_id)
+        except ImportError:
+            pass
+
+        if env is not None:
+            logger.info("Manually cleaned up environment for task: %s", task_id)
+        return
+
     # Remove from tracking dicts while holding the lock, but defer the
     # actual (potentially slow) env.cleanup() call to outside the lock
     # so other tool calls aren't blocked.
@@ -988,6 +1051,8 @@ def cleanup_vm(task_id: str):
         return
 
     try:
+        _cleanup_task_mounts(task_id, strict=False)
+
         if hasattr(env, 'cleanup'):
             env.cleanup()
         elif hasattr(env, 'stop'):

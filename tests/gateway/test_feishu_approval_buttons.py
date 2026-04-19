@@ -152,6 +152,38 @@ class TestFeishuExecApproval:
         assert state["session_key"] == "my-session-key"
         assert state["message_id"] == "msg_002"
         assert state["chat_id"] == "oc_12345"
+        assert state["choices"] == ["once", "session", "always", "deny"]
+
+    @pytest.mark.asyncio
+    async def test_operation_approval_uses_custom_title_and_one_shot_buttons(self):
+        adapter = _make_adapter()
+
+        mock_response = SimpleNamespace(
+            success=lambda: True,
+            data=SimpleNamespace(message_id="msg_010"),
+        )
+        with patch.object(
+            adapter, "_feishu_send_with_retry", new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_send:
+            await adapter.send_exec_approval(
+                chat_id="oc_12345",
+                command="switch task abc from docker to host/local execution",
+                session_key="host-op-session",
+                description="Allow this task to leave Docker and run on the host.",
+                metadata={
+                    "approval_title": "Host Environment Approval",
+                    "approval_choices": ["once", "deny"],
+                },
+            )
+
+        card = json.loads(mock_send.call_args[1]["payload"])
+        assert card["header"]["title"]["content"] == "⚠️ Host Environment Approval"
+        actions = card["elements"][1]["actions"]
+        assert [a["value"]["hermes_action"] for a in actions] == ["approve_once", "deny"]
+        state = adapter._approval_state[1]
+        assert state["session_key"] == "host-op-session"
+        assert state["choices"] == ["once", "deny"]
 
     @pytest.mark.asyncio
     async def test_not_connected(self):
@@ -273,6 +305,22 @@ class TestResolveApproval:
         mock_resolve.assert_called_once_with("sess-4", "always")
 
     @pytest.mark.asyncio
+    async def test_rejects_disallowed_choice_for_one_shot_approval(self):
+        adapter = _make_adapter()
+        adapter._approval_state[5] = {
+            "session_key": "sess-5",
+            "message_id": "msg_005",
+            "chat_id": "oc_55",
+            "choices": ["once", "deny"],
+        }
+
+        with patch("tools.approval.resolve_gateway_approval") as mock_resolve:
+            await adapter._resolve_approval(5, "session", "Carol")
+
+        mock_resolve.assert_not_called()
+        assert adapter._approval_state[5]["choices"] == ["once", "deny"]
+
+    @pytest.mark.asyncio
     async def test_already_resolved_drops_silently(self):
         adapter = _make_adapter()
 
@@ -280,6 +328,29 @@ class TestResolveApproval:
             await adapter._resolve_approval(99, "once", "Nobody")
 
         mock_resolve.assert_not_called()
+
+    def test_handle_approval_card_action_ignores_disallowed_choice(self):
+        adapter = _make_adapter()
+        adapter._approval_state[6] = {
+            "session_key": "sess-6",
+            "message_id": "msg_006",
+            "chat_id": "oc_55",
+            "choices": ["once", "deny"],
+        }
+        loop = MagicMock()
+        event = SimpleNamespace(operator=SimpleNamespace(open_id="ou_user1"))
+        action_value = {"approval_id": 6, "hermes_action": "approve_session"}
+
+        with patch.object(adapter, "_submit_on_loop") as mock_submit:
+            response = adapter._handle_approval_card_action(
+                event=event,
+                action_value=action_value,
+                loop=loop,
+            )
+
+        mock_submit.assert_not_called()
+        assert 6 in adapter._approval_state
+        assert response is not None or feishu_module.P2CardActionTriggerResponse is None
 
 # ===========================================================================
 # _handle_card_action_event — non-approval card actions
@@ -297,14 +368,21 @@ class TestNonApprovalCardAction:
             token="tok_normal",
         )
 
-        with (
-            patch.object(
-                adapter, "_resolve_sender_profile", new_callable=AsyncMock,
-                return_value={"user_id": "ou_u", "user_name": "Dave", "user_id_alt": None},
-            ),
-            patch.object(adapter, "get_chat_info", new_callable=AsyncMock, return_value={"name": "Test Chat"}),
-            patch.object(adapter, "_handle_message_with_guards", new_callable=AsyncMock) as mock_handle,
-        ):
+        with patch.object(
+            adapter,
+            "_resolve_sender_profile",
+            new_callable=AsyncMock,
+            return_value={"user_id": "ou_u", "user_name": "Dave", "user_id_alt": None},
+        ), patch.object(
+            adapter,
+            "get_chat_info",
+            new_callable=AsyncMock,
+            return_value={"name": "Test Chat"},
+        ), patch.object(
+            adapter,
+            "_handle_message_with_guards",
+            new_callable=AsyncMock,
+        ) as mock_handle:
             await adapter._handle_card_action_event(data)
 
         mock_handle.assert_called_once()

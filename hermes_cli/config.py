@@ -408,6 +408,23 @@ DEFAULT_CONFIG = {
         # Explicit opt-in: mount the host cwd into /workspace for Docker sessions.
         # Default off because passing host directories into a sandbox weakens isolation.
         "docker_mount_cwd_to_workspace": False,
+        # Restricted privileged host actions are opt-in and must point at
+        # explicit allowlisted wrappers. This never exposes a generic root shell.
+        "privileged_host_actions_enabled": False,
+        "privileged_host_actions": {},
+        # Dynamic Docker host mounts are opt-in and only affect Docker sandboxes
+        # that were started after the feature was enabled. Host paths must be
+        # allowlisted and every mount still requires one-shot approval.
+        "docker_dynamic_mounts_enabled": False,
+        "docker_dynamic_mounts_root": "",
+        "docker_dynamic_mounts_allowed_roots": [],
+        "docker_mount_helper": {
+            "mode": "host-nsenter",
+            "wrapper": "",
+            "helper_image": "",
+            "helper_prepare_command": "",
+            "timeout": 60,
+        },
         # Persistent shell — keep a long-lived bash shell across execute() calls
         # so cwd/env vars/shell variables survive between commands.
         # Enabled by default for non-local backends (SSH); local is always opt-in

@@ -1093,8 +1093,8 @@ class FeishuAdapter(BasePlatformAdapter):
         self._media_batch_state = FeishuBatchState()
         self._pending_media_batches = self._media_batch_state.events
         self._pending_media_batch_tasks = self._media_batch_state.tasks
-        # Exec approval button state (approval_id → {session_key, message_id, chat_id})
-        self._approval_state: Dict[int, Dict[str, str]] = {}
+        # Exec approval button state (approval_id → {session_key, message_id, chat_id, choices})
+        self._approval_state: Dict[int, Dict[str, Any]] = {}
         self._approval_counter = itertools.count(1)
         self._load_seen_message_ids()
 
@@ -1466,7 +1466,14 @@ class FeishuAdapter(BasePlatformAdapter):
 
         try:
             approval_id = next(self._approval_counter)
+            metadata = dict(metadata or {})
             cmd_preview = command[:3000] + "..." if len(command) > 3000 else command
+            title = str(metadata.get("approval_title") or "Command Approval Required")
+            choices = [
+                str(choice).strip().lower()
+                for choice in (metadata.get("approval_choices") or ["once", "session", "always", "deny"])
+                if str(choice).strip()
+            ] or ["once", "session", "always", "deny"]
 
             def _btn(label: str, action_name: str, btn_type: str = "default") -> dict:
                 return {
@@ -1476,10 +1483,17 @@ class FeishuAdapter(BasePlatformAdapter):
                     "value": {"hermes_action": action_name, "approval_id": approval_id},
                 }
 
+            button_specs = {
+                "once": ("✅ Allow Once", "approve_once", "primary"),
+                "session": ("✅ Session", "approve_session", "default"),
+                "always": ("✅ Always", "approve_always", "default"),
+                "deny": ("❌ Deny", "deny", "danger"),
+            }
+
             card = {
                 "config": {"wide_screen_mode": True},
                 "header": {
-                    "title": {"content": "⚠️ Command Approval Required", "tag": "plain_text"},
+                    "title": {"content": f"⚠️ {title}", "tag": "plain_text"},
                     "template": "orange",
                 },
                 "elements": [
@@ -1490,10 +1504,7 @@ class FeishuAdapter(BasePlatformAdapter):
                     {
                         "tag": "action",
                         "actions": [
-                            _btn("✅ Allow Once", "approve_once", "primary"),
-                            _btn("✅ Session", "approve_session"),
-                            _btn("✅ Always", "approve_always"),
-                            _btn("❌ Deny", "deny", "danger"),
+                            _btn(*button_specs[choice]) for choice in choices
                         ],
                     },
                 ],
@@ -1514,6 +1525,7 @@ class FeishuAdapter(BasePlatformAdapter):
                     "session_key": session_key,
                     "message_id": result.message_id or "",
                     "chat_id": chat_id,
+                    "choices": choices,
                 }
             return result
         except Exception as exc:
@@ -2064,6 +2076,19 @@ class FeishuAdapter(BasePlatformAdapter):
             logger.debug("[Feishu] Card action missing approval_id, ignoring")
             return P2CardActionTriggerResponse() if P2CardActionTriggerResponse else None
         choice = _APPROVAL_CHOICE_MAP.get(action_value.get("hermes_action"), "deny")
+        state = self._approval_state.get(approval_id)
+        allowed_choices = {
+            str(item).strip().lower()
+            for item in (state or {}).get("choices", ["once", "session", "always", "deny"])
+            if str(item).strip()
+        }
+        if choice not in allowed_choices:
+            logger.warning(
+                "[Feishu] Ignoring disallowed approval choice %s for approval %s",
+                choice,
+                approval_id,
+            )
+            return P2CardActionTriggerResponse() if P2CardActionTriggerResponse else None
 
         operator = getattr(event, "operator", None)
         open_id = str(getattr(operator, "open_id", "") or "")
@@ -2086,6 +2111,19 @@ class FeishuAdapter(BasePlatformAdapter):
         state = self._approval_state.pop(approval_id, None)
         if not state:
             logger.debug("[Feishu] Approval %s already resolved or unknown", approval_id)
+            return
+        allowed_choices = {
+            str(item).strip().lower()
+            for item in state.get("choices", ["once", "session", "always", "deny"])
+            if str(item).strip()
+        }
+        if choice not in allowed_choices:
+            logger.warning(
+                "[Feishu] Ignoring disallowed resolved choice %s for approval %s",
+                choice,
+                approval_id,
+            )
+            self._approval_state[approval_id] = state
             return
         try:
             from tools.approval import resolve_gateway_approval
