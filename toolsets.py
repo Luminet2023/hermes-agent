@@ -33,6 +33,7 @@ _HERMES_CORE_TOOLS = [
     "web_search", "web_extract",
     # Terminal + process management
     "terminal", "process",
+    "request_host_env", "restore_sandbox_env",
     # File manipulation
     "read_file", "write_file", "patch", "search_files",
     # Vision + image generation
@@ -93,7 +94,10 @@ TOOLSETS = {
     
     "terminal": {
         "description": "Terminal/command execution and process management tools",
-        "tools": ["terminal", "process"],
+        "tools": [
+            "terminal", "process",
+            "request_host_env", "restore_sandbox_env",
+        ],
         "includes": []
     },
     
@@ -243,6 +247,7 @@ TOOLSETS = {
         "tools": [
             "web_search", "web_extract",
             "terminal", "process",
+            "request_host_env", "restore_sandbox_env",
             "read_file", "write_file", "patch", "search_files",
             "vision_analyze",
             "skills_list", "skill_view", "skill_manage",
@@ -264,6 +269,7 @@ TOOLSETS = {
             "web_search", "web_extract",
             # Terminal + process management
             "terminal", "process",
+            "request_host_env", "restore_sandbox_env",
             # File manipulation
             "read_file", "write_file", "patch", "search_files",
             # Vision + image generation

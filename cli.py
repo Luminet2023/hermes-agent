@@ -7580,7 +7580,9 @@ class HermesCLI:
         return ""
 
     def _approval_callback(self, command: str, description: str,
-                           *, allow_permanent: bool = True) -> str:
+                           *, allow_permanent: bool = True,
+                           choices: list[str] | None = None,
+                           title: str = "⚠️  Dangerous Command") -> str:
         """
         Prompt for dangerous command approval through the prompt_toolkit UI.
 
@@ -7603,7 +7605,10 @@ class HermesCLI:
             self._approval_state = {
                 "command": command,
                 "description": description,
-                "choices": self._approval_choices(command, allow_permanent=allow_permanent),
+                "title": title,
+                "choices": self._approval_choices(
+                    command, allow_permanent=allow_permanent, choices=choices
+                ),
                 "selected": 0,
                 "response_queue": response_queue,
             }
@@ -7634,12 +7639,15 @@ class HermesCLI:
             _cprint(f"\n{_DIM}  ⏱ Timeout — denying command{_RST}")
             return "deny"
 
-    def _approval_choices(self, command: str, *, allow_permanent: bool = True) -> list[str]:
+    def _approval_choices(self, command: str, *, allow_permanent: bool = True,
+                          choices: list[str] | None = None) -> list[str]:
         """Return approval choices for a dangerous command prompt."""
-        choices = ["once", "session", "always", "deny"] if allow_permanent else ["once", "session", "deny"]
-        if len(command) > 70:
-            choices.append("view")
-        return choices
+        resolved = list(choices) if choices is not None else (
+            ["once", "session", "always", "deny"] if allow_permanent else ["once", "session", "deny"]
+        )
+        if len(command) > 70 and "view" not in resolved:
+            resolved.append("view")
+        return resolved
 
     def _handle_approval_selection(self) -> None:
         """Process the currently selected dangerous-command approval choice."""
@@ -7710,7 +7718,7 @@ class HermesCLI:
         selected = state.get("selected", 0)
         show_full = state.get("show_full", False)
 
-        title = "⚠️  Dangerous Command"
+        title = state.get("title") or "⚠️  Dangerous Command"
         cmd_display = command if show_full or len(command) <= 70 else command[:70] + '...'
         choice_labels = {
             "once": "Allow once",

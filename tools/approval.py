@@ -291,6 +291,35 @@ def has_blocking_approval(session_key: str) -> bool:
         return bool(_gateway_queues.get(session_key))
 
 
+def get_gateway_approval_choices(
+    session_key: str,
+    *,
+    resolve_all: bool = False,
+) -> list[str]:
+    """Return the allowed choices for the current blocking gateway approval(s)."""
+    with _lock:
+        queue = list(_gateway_queues.get(session_key, []))
+
+    if not queue:
+        return []
+
+    def _entry_choices(entry: _ApprovalEntry) -> set[str]:
+        data_choices = entry.data.get("choices")
+        normalized = _normalize_approval_choices(
+            list(data_choices) if data_choices is not None else None
+        )
+        return set(normalized)
+
+    if not resolve_all:
+        ordered = _normalize_approval_choices(queue[0].data.get("choices"))
+        return ordered
+
+    allowed = _entry_choices(queue[0])
+    for entry in queue[1:]:
+        allowed &= _entry_choices(entry)
+    return [choice for choice in ("once", "session", "always", "deny") if choice in allowed]
+
+
 def submit_pending(session_key: str, approval: dict):
     """Store a pending approval request for a session."""
     with _lock:
@@ -407,6 +436,163 @@ def save_permanent_allowlist(patterns: set):
 # Approval prompting + orchestration
 # =========================================================================
 
+_APPROVAL_PROMPT_LABELS = {
+    "once": "Allowed once",
+    "session": "Allowed for this session",
+    "always": "Added to permanent allowlist",
+    "deny": "Denied",
+}
+
+
+def _normalize_approval_choices(
+    choices: list[str] | tuple[str, ...] | None,
+    *,
+    allow_permanent: bool = True,
+) -> list[str]:
+    """Return normalized approval choices, preserving order and adding deny."""
+    if choices is None:
+        normalized = ["once", "session", "always", "deny"] if allow_permanent else ["once", "session", "deny"]
+    else:
+        normalized = []
+        seen: set[str] = set()
+        for item in choices:
+            choice = str(item or "").strip().lower()
+            if choice not in {"once", "session", "always", "deny"} or choice in seen:
+                continue
+            normalized.append(choice)
+            seen.add(choice)
+        if "deny" not in seen:
+            normalized.append("deny")
+    return normalized
+
+
+def _approval_choice_prompt(choices: list[str]) -> str:
+    """Build the interactive input hint for a choice set."""
+    short = {
+        "once": "o",
+        "session": "s",
+        "always": "a",
+        "deny": "D",
+    }
+    ordered = [short[c] for c in choices if c in short]
+    if not ordered:
+        ordered = ["D"]
+    return f"      Choice [{'/'.join(ordered)}]: "
+
+
+def _approval_choice_menu(choices: list[str]) -> str:
+    """Build the text menu shown before prompting."""
+    labels = {
+        "once": "[o]nce",
+        "session": "[s]ession",
+        "always": "[a]lways",
+        "deny": "[d]eny",
+    }
+    rendered = [labels[c] for c in choices if c in labels]
+    return "  |  ".join(rendered)
+
+
+def _resolve_approval_text_choice(
+    raw_choice: str,
+    *,
+    choices: list[str],
+    allow_permanent: bool,
+) -> str:
+    """Map CLI text input to an approval choice."""
+    choice = str(raw_choice or "").strip().lower()
+    mapping = {
+        "o": "once",
+        "once": "once",
+        "s": "session",
+        "session": "session",
+        "a": "always",
+        "always": "always",
+        "d": "deny",
+        "deny": "deny",
+    }
+    resolved = mapping.get(choice, "deny")
+    if resolved == "always" and "always" not in choices:
+        if allow_permanent and "session" in choices:
+            return "session"
+        return "deny"
+    if resolved not in choices:
+        return "deny"
+    return resolved
+
+
+def prompt_user_approval(command: str, description: str, *,
+                         title: str = "DANGEROUS COMMAND",
+                         timeout_seconds: int | None = None,
+                         allow_permanent: bool = True,
+                         choices: list[str] | tuple[str, ...] | None = None,
+                         approval_callback=None) -> str:
+    """Prompt the user to approve an operation via CLI or callback."""
+    if timeout_seconds is None:
+        timeout_seconds = _get_approval_timeout()
+
+    normalized_choices = _normalize_approval_choices(
+        list(choices) if choices is not None else None,
+        allow_permanent=allow_permanent,
+    )
+
+    if approval_callback is not None:
+        try:
+            return approval_callback(
+                command,
+                description,
+                allow_permanent=allow_permanent,
+                choices=normalized_choices,
+                title=title,
+            )
+        except Exception as e:
+            logger.error("Approval callback failed: %s", e, exc_info=True)
+            return "deny"
+
+    os.environ["HERMES_SPINNER_PAUSE"] = "1"
+    try:
+        while True:
+            print()
+            print(f"  ⚠️  {title}: {description}")
+            print(f"      {command}")
+            print()
+            print(f"      {_approval_choice_menu(normalized_choices)}")
+            print()
+            sys.stdout.flush()
+
+            result = {"choice": ""}
+
+            def get_input():
+                try:
+                    result["choice"] = input(_approval_choice_prompt(normalized_choices)).strip().lower()
+                except (EOFError, OSError):
+                    result["choice"] = ""
+
+            thread = threading.Thread(target=get_input, daemon=True)
+            thread.start()
+            thread.join(timeout=timeout_seconds)
+
+            if thread.is_alive():
+                print("\n      ⏱ Timeout - denying request")
+                return "deny"
+
+            resolved = _resolve_approval_text_choice(
+                result["choice"],
+                choices=normalized_choices,
+                allow_permanent=allow_permanent,
+            )
+            print(f"      ✓ {_APPROVAL_PROMPT_LABELS.get(resolved, 'Approved')}" if resolved != "deny" else "      ✗ Denied")
+            return resolved
+
+    except (EOFError, KeyboardInterrupt):
+        print("\n      ✗ Cancelled")
+        return "deny"
+    finally:
+        if "HERMES_SPINNER_PAUSE" in os.environ:
+            del os.environ["HERMES_SPINNER_PAUSE"]
+        print()
+        sys.stdout.flush()
+
+
 def prompt_dangerous_approval(command: str, description: str,
                               timeout_seconds: int | None = None,
                               allow_permanent: bool = True,
@@ -423,73 +609,192 @@ def prompt_dangerous_approval(command: str, description: str,
 
     Returns: 'once', 'session', 'always', or 'deny'
     """
-    if timeout_seconds is None:
-        timeout_seconds = _get_approval_timeout()
+    return prompt_user_approval(
+        command,
+        description,
+        title="DANGEROUS COMMAND",
+        timeout_seconds=timeout_seconds,
+        allow_permanent=allow_permanent,
+        approval_callback=approval_callback,
+    )
 
-    if approval_callback is not None:
-        try:
-            return approval_callback(command, description,
-                                     allow_permanent=allow_permanent)
-        except Exception as e:
-            logger.error("Approval callback failed: %s", e, exc_info=True)
-            return "deny"
 
-    os.environ["HERMES_SPINNER_PAUSE"] = "1"
+def _blocking_gateway_approval(session_key: str, approval_data: dict) -> dict:
+    """Send an approval request and block until the user responds."""
+    notify_cb = None
+    with _lock:
+        notify_cb = _gateway_notify_cbs.get(session_key)
+
+    if notify_cb is None:
+        return {"status": "no_callback"}
+
+    entry = _ApprovalEntry(approval_data)
+    with _lock:
+        _gateway_queues.setdefault(session_key, []).append(entry)
+
     try:
-        while True:
-            print()
-            print(f"  ⚠️  DANGEROUS COMMAND: {description}")
-            print(f"      {command}")
-            print()
-            if allow_permanent:
-                print("      [o]nce  |  [s]ession  |  [a]lways  |  [d]eny")
-            else:
-                print("      [o]nce  |  [s]ession  |  [d]eny")
-            print()
-            sys.stdout.flush()
+        notify_cb(approval_data)
+    except Exception as exc:
+        logger.warning("Gateway approval notify failed: %s", exc)
+        with _lock:
+            queue = _gateway_queues.get(session_key, [])
+            if entry in queue:
+                queue.remove(entry)
+            if not queue:
+                _gateway_queues.pop(session_key, None)
+        return {"status": "notify_failed", "error": str(exc)}
 
-            result = {"choice": ""}
+    timeout = _get_approval_config().get("gateway_timeout", 300)
+    try:
+        timeout = int(timeout)
+    except (ValueError, TypeError):
+        timeout = 300
 
-            def get_input():
-                try:
-                    prompt = "      Choice [o/s/a/D]: " if allow_permanent else "      Choice [o/s/D]: "
-                    result["choice"] = input(prompt).strip().lower()
-                except (EOFError, OSError):
-                    result["choice"] = ""
+    try:
+        from tools.environments.base import touch_activity_if_due
+    except Exception:  # pragma: no cover
+        touch_activity_if_due = None
 
-            thread = threading.Thread(target=get_input, daemon=True)
-            thread.start()
-            thread.join(timeout=timeout_seconds)
+    _now = time.monotonic()
+    _deadline = _now + max(timeout, 0)
+    _activity_state = {"last_touch": _now, "start": _now}
+    resolved = False
+    while True:
+        _remaining = _deadline - time.monotonic()
+        if _remaining <= 0:
+            break
+        if entry.event.wait(timeout=min(1.0, _remaining)):
+            resolved = True
+            break
+        if touch_activity_if_due is not None:
+            touch_activity_if_due(_activity_state, "waiting for user approval")
 
-            if thread.is_alive():
-                print("\n      ⏱ Timeout - denying command")
-                return "deny"
+    with _lock:
+        queue = _gateway_queues.get(session_key, [])
+        if entry in queue:
+            queue.remove(entry)
+        if not queue:
+            _gateway_queues.pop(session_key, None)
 
-            choice = result["choice"]
-            if choice in ('o', 'once'):
-                print("      ✓ Allowed once")
-                return "once"
-            elif choice in ('s', 'session'):
-                print("      ✓ Allowed for this session")
-                return "session"
-            elif choice in ('a', 'always'):
-                if not allow_permanent:
-                    print("      ✓ Allowed for this session")
-                    return "session"
-                print("      ✓ Added to permanent allowlist")
-                return "always"
-            else:
-                print("      ✗ Denied")
-                return "deny"
+    if not resolved:
+        return {"status": "timeout"}
+    return {"status": "resolved", "choice": entry.result}
 
-    except (EOFError, KeyboardInterrupt):
-        print("\n      ✗ Cancelled")
-        return "deny"
-    finally:
-        if "HERMES_SPINNER_PAUSE" in os.environ:
-            del os.environ["HERMES_SPINNER_PAUSE"]
-        print()
-        sys.stdout.flush()
+
+def request_operation_approval(command: str, description: str, *,
+                               title: str = "Approval Required",
+                               choices: list[str] | tuple[str, ...] | None = None,
+                               approval_callback=None) -> dict:
+    """Request approval for a non-command operation using the shared UX."""
+    normalized_choices = _normalize_approval_choices(
+        list(choices) if choices is not None else ["once", "deny"],
+        allow_permanent=False,
+    )
+
+    approval_mode = _get_approval_mode()
+    if os.getenv("HERMES_YOLO_MODE") or is_current_session_yolo_enabled() or approval_mode == "off":
+        return {
+            "approved": True,
+            "message": None,
+            "choice": "once",
+            "bypassed": True,
+            "description": description,
+            "title": title,
+        }
+
+    is_cli = os.getenv("HERMES_INTERACTIVE")
+    is_gateway = os.getenv("HERMES_GATEWAY_SESSION")
+    is_ask = os.getenv("HERMES_EXEC_ASK")
+    if not is_cli and not is_gateway and not is_ask:
+        return {
+            "approved": True,
+            "message": None,
+            "choice": "once",
+            "noninteractive": True,
+            "description": description,
+            "title": title,
+        }
+
+    session_key = get_current_session_key()
+    approval_data = {
+        "command": command,
+        "description": description,
+        "title": title,
+        "choices": normalized_choices,
+        "approval_kind": "operation",
+    }
+
+    if is_gateway or is_ask:
+        result = _blocking_gateway_approval(session_key, approval_data)
+        if result["status"] == "no_callback":
+            submit_pending(session_key, approval_data)
+            return {
+                "approved": False,
+                "status": "approval_required",
+                "command": command,
+                "description": description,
+                "title": title,
+                "choices": normalized_choices,
+                "message": (
+                    f"⚠️ {description}. Asking the user for approval.\n\n"
+                    f"**Request:**\n```\n{command}\n```"
+                ),
+            }
+        if result["status"] == "notify_failed":
+            return {
+                "approved": False,
+                "message": "BLOCKED: Failed to send approval request to user. Do NOT retry.",
+                "description": description,
+                "title": title,
+            }
+        if result["status"] != "resolved":
+            return {
+                "approved": False,
+                "message": "BLOCKED: Approval request timed out. Do NOT retry.",
+                "description": description,
+                "title": title,
+            }
+
+        choice = str(result.get("choice") or "deny").strip().lower()
+        if choice not in normalized_choices or choice == "deny":
+            return {
+                "approved": False,
+                "message": "BLOCKED: Request denied by user. Do NOT retry.",
+                "description": description,
+                "title": title,
+            }
+        return {
+            "approved": True,
+            "message": None,
+            "choice": choice,
+            "user_approved": True,
+            "description": description,
+            "title": title,
+        }
+
+    choice = prompt_user_approval(
+        command,
+        description,
+        title=title,
+        allow_permanent=False,
+        choices=normalized_choices,
+        approval_callback=approval_callback,
+    )
+    if choice not in normalized_choices or choice == "deny":
+        return {
+            "approved": False,
+            "message": "BLOCKED: User denied. Do NOT retry.",
+            "description": description,
+            "title": title,
+        }
+    return {
+        "approved": True,
+        "message": None,
+        "choice": choice,
+        "user_approved": True,
+        "description": description,
+        "title": title,
+    }
 
 
 def _normalize_approval_mode(mode) -> str:

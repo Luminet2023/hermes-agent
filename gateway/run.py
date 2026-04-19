@@ -7244,7 +7244,9 @@ class GatewayRunner:
         session_key = self._session_key_for_source(source)
 
         from tools.approval import (
-            resolve_gateway_approval, has_blocking_approval,
+            get_gateway_approval_choices,
+            resolve_gateway_approval,
+            has_blocking_approval,
         )
 
         if not has_blocking_approval(session_key):
@@ -7267,6 +7269,22 @@ class GatewayRunner:
         else:
             choice = "once"
             scope_msg = ""
+
+        allowed_choices = get_gateway_approval_choices(session_key, resolve_all=resolve_all)
+        if allowed_choices and choice not in allowed_choices:
+            allowed_text = []
+            if "once" in allowed_choices:
+                allowed_text.append("`/approve`")
+            if "session" in allowed_choices:
+                allowed_text.append("`/approve session`")
+            if "always" in allowed_choices:
+                allowed_text.append("`/approve always`")
+            allowed_text.append("`/deny`")
+            return (
+                "This approval request only allows "
+                + ", ".join(allowed_text)
+                + "."
+            )
 
         count = resolve_gateway_approval(session_key, choice, resolve_all=resolve_all)
         if not count:
@@ -9460,11 +9478,21 @@ class GatewayRunner:
 
                 cmd = approval_data.get("command", "")
                 desc = approval_data.get("description", "dangerous command")
+                title = str(approval_data.get("title") or "Dangerous command requires approval")
+                choices = [
+                    str(choice).strip().lower()
+                    for choice in (approval_data.get("choices") or ["once", "session", "always", "deny"])
+                    if str(choice).strip()
+                ]
+                default_button_choices = ["once", "session", "always", "deny"]
 
                 # Prefer button-based approval when the adapter supports it.
                 # Check the *class* for the method, not the instance — avoids
                 # false positives from MagicMock auto-attribute creation in tests.
-                if getattr(type(_status_adapter), "send_exec_approval", None) is not None:
+                if (
+                    choices == default_button_choices
+                    and getattr(type(_status_adapter), "send_exec_approval", None) is not None
+                ):
                     try:
                         _approval_result = asyncio.run_coroutine_threadsafe(
                             _status_adapter.send_exec_approval(
@@ -9489,12 +9517,19 @@ class GatewayRunner:
 
                 # Fallback: plain text approval prompt
                 cmd_preview = cmd[:200] + "..." if len(cmd) > 200 else cmd
+                approve_instructions = []
+                if "once" in choices:
+                    approve_instructions.append("`/approve` to allow once")
+                if "session" in choices:
+                    approve_instructions.append("`/approve session` to allow for this session")
+                if "always" in choices:
+                    approve_instructions.append("`/approve always` to approve permanently")
+                approve_instructions.append("`/deny` to cancel")
                 msg = (
-                    f"⚠️ **Dangerous command requires approval:**\n"
+                    f"⚠️ **{title}:**\n"
                     f"```\n{cmd_preview}\n```\n"
                     f"Reason: {desc}\n\n"
-                    f"Reply `/approve` to execute, `/approve session` to approve this pattern "
-                    f"for the session, `/approve always` to approve permanently, or `/deny` to cancel."
+                    f"Reply {', '.join(approve_instructions)}."
                 )
                 try:
                     asyncio.run_coroutine_threadsafe(

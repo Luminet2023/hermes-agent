@@ -47,6 +47,8 @@ import uuid
 _IS_WINDOWS = platform.system() == "Windows"
 from typing import Any, Dict, List, Optional
 
+from tools.task_env_state import build_environment_request
+
 # Availability gate: UDS requires a POSIX OS
 logger = logging.getLogger(__name__)
 
@@ -438,8 +440,8 @@ def _get_or_create_env(task_id: str):
     """
     from tools.terminal_tool import (
         _active_environments, _env_lock, _create_environment,
-        _get_env_config, _last_activity, _start_cleanup_thread,
-        _creation_locks, _creation_locks_lock, _task_env_overrides,
+        _last_activity, _start_cleanup_thread,
+        _creation_locks, _creation_locks_lock,
     )
 
     effective_task_id = task_id or "default"
@@ -448,7 +450,8 @@ def _get_or_create_env(task_id: str):
     with _env_lock:
         if effective_task_id in _active_environments:
             _last_activity[effective_task_id] = time.time()
-            return _active_environments[effective_task_id], _get_env_config()["env_type"]
+            request = build_environment_request(effective_task_id)
+            return _active_environments[effective_task_id], request["env_type"]
 
     # Slow path: create environment (same pattern as file_tools._get_file_ops)
     with _creation_locks_lock:
@@ -460,63 +463,24 @@ def _get_or_create_env(task_id: str):
         with _env_lock:
             if effective_task_id in _active_environments:
                 _last_activity[effective_task_id] = time.time()
-                return _active_environments[effective_task_id], _get_env_config()["env_type"]
+                request = build_environment_request(effective_task_id)
+                return _active_environments[effective_task_id], request["env_type"]
 
-        config = _get_env_config()
-        env_type = config["env_type"]
-        overrides = _task_env_overrides.get(effective_task_id, {})
-
-        if env_type == "docker":
-            image = overrides.get("docker_image") or config["docker_image"]
-        elif env_type == "singularity":
-            image = overrides.get("singularity_image") or config["singularity_image"]
-        elif env_type == "modal":
-            image = overrides.get("modal_image") or config["modal_image"]
-        elif env_type == "daytona":
-            image = overrides.get("daytona_image") or config["daytona_image"]
-        else:
-            image = ""
-
-        cwd = overrides.get("cwd") or config["cwd"]
-
-        container_config = None
-        if env_type in ("docker", "singularity", "modal", "daytona"):
-            container_config = {
-                "container_cpu": config.get("container_cpu", 1),
-                "container_memory": config.get("container_memory", 5120),
-                "container_disk": config.get("container_disk", 51200),
-                "container_persistent": config.get("container_persistent", True),
-                "docker_volumes": config.get("docker_volumes", []),
-            }
-
-        ssh_config = None
-        if env_type == "ssh":
-            ssh_config = {
-                "host": config.get("ssh_host", ""),
-                "user": config.get("ssh_user", ""),
-                "port": config.get("ssh_port", 22),
-                "key": config.get("ssh_key", ""),
-                "persistent": config.get("ssh_persistent", False),
-            }
-
-        local_config = None
-        if env_type == "local":
-            local_config = {
-                "persistent": config.get("local_persistent", False),
-            }
+        request = build_environment_request(effective_task_id)
+        env_type = request["env_type"]
 
         logger.info("Creating new %s environment for execute_code task %s...",
                      env_type, effective_task_id[:8])
         env = _create_environment(
-            env_type=env_type,
-            image=image,
-            cwd=cwd,
-            timeout=config["timeout"],
-            ssh_config=ssh_config,
-            container_config=container_config,
-            local_config=local_config,
+            env_type=request["env_type"],
+            image=request["image"],
+            cwd=request["cwd"],
+            timeout=request["timeout"],
+            ssh_config=request["ssh_config"],
+            container_config=request["container_config"],
+            local_config=request["local_config"],
             task_id=effective_task_id,
-            host_cwd=config.get("host_cwd"),
+            host_cwd=request["host_cwd"],
         )
 
         with _env_lock:
@@ -928,9 +892,10 @@ def execute_code(
     if not code or not code.strip():
         return tool_error("No code provided.")
 
-    # Dispatch: remote backends use file-based RPC, local uses UDS
-    from tools.terminal_tool import _get_env_config
-    env_type = _get_env_config()["env_type"]
+    # Dispatch: remote backends use file-based RPC, local uses UDS.
+    # This must honor task-scoped backend overrides so execute_code stays in
+    # lockstep with terminal/file tools after host escalation or restore.
+    env_type = build_environment_request(task_id or "default")["env_type"]
     if env_type != "local":
         return _execute_remote(code, task_id, enabled_tools)
 
