@@ -83,6 +83,33 @@ class TestCliApprovalUi:
         thread.join(timeout=2)
         assert result["value"] == "deny"
 
+    def test_approval_callback_respects_explicit_choice_subset_and_title(self):
+        cli = _make_cli_stub()
+        result = {}
+
+        def _run_callback():
+            result["value"] = cli._approval_callback(
+                "switch task abc to host/local execution",
+                "Allow this task to leave Docker and run on the host.",
+                choices=["once", "deny"],
+                title="Host Environment Approval",
+            )
+
+        thread = threading.Thread(target=_run_callback, daemon=True)
+        thread.start()
+
+        deadline = time.time() + 2
+        while cli._approval_state is None and time.time() < deadline:
+            time.sleep(0.01)
+
+        assert cli._approval_state is not None
+        assert cli._approval_state["title"] == "Host Environment Approval"
+        assert cli._approval_state["choices"] == ["once", "deny"]
+
+        cli._approval_state["response_queue"].put("deny")
+        thread.join(timeout=2)
+        assert result["value"] == "deny"
+
     def test_handle_approval_selection_view_expands_in_place(self):
         cli = _make_cli_stub()
         cli._approval_state = {

@@ -183,7 +183,10 @@ def prompt_for_secret(cli, var_name: str, prompt: str, metadata=None) -> dict:
     }
 
 
-def approval_callback(cli, command: str, description: str) -> str:
+def approval_callback(cli, command: str, description: str, *,
+                      allow_permanent: bool = True,
+                      choices=None,
+                      title: str = "⚠️  Dangerous Command") -> str:
     """Prompt for dangerous command approval through the TUI.
 
     Shows a selection UI with choices: once / session / always / deny.
@@ -203,14 +206,17 @@ def approval_callback(cli, command: str, description: str) -> str:
         from cli import CLI_CONFIG
         timeout = CLI_CONFIG.get("approvals", {}).get("timeout", 60)
         response_queue = queue.Queue()
-        choices = ["once", "session", "always", "deny"]
-        if len(command) > 70:
-            choices.append("view")
+        resolved_choices = list(choices) if choices is not None else (
+            ["once", "session", "always", "deny"] if allow_permanent else ["once", "session", "deny"]
+        )
+        if len(command) > 70 and "view" not in resolved_choices:
+            resolved_choices.append("view")
 
         cli._approval_state = {
             "command": command,
             "description": description,
-            "choices": choices,
+            "title": title,
+            "choices": resolved_choices,
             "selected": 0,
             "response_queue": response_queue,
         }

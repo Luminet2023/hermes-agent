@@ -46,6 +46,13 @@ from typing import Optional, Dict, Any, List
 
 logger = logging.getLogger(__name__)
 
+from tools.task_env_state import (
+    _task_env_overrides,
+    build_environment_request as _build_task_environment_request,
+    clear_task_env_overrides as _clear_task_env_overrides_impl,
+    register_task_env_overrides as _register_task_env_overrides_impl,
+)
+
 
 # ---------------------------------------------------------------------------
 # Global interrupt event: set by the agent when a user interrupt arrives.
@@ -539,17 +546,6 @@ _creation_locks_lock = threading.Lock()  # Protects _creation_locks dict itself
 _cleanup_thread = None
 _cleanup_running = False
 
-# Per-task environment overrides registry.
-# Allows environments (e.g., TerminalBench2Env) to specify a custom Docker/Modal
-# image for a specific task_id BEFORE the agent loop starts. When the terminal or
-# file tools create a new sandbox for that task_id, they check this registry first
-# and fall back to the TERMINAL_MODAL_IMAGE (etc.) env var if no override is set.
-#
-# This is never exposed to the model -- only infrastructure code calls it.
-# Thread-safe because each task_id is unique per rollout.
-_task_env_overrides: Dict[str, Dict[str, Any]] = {}
-
-
 def register_task_env_overrides(task_id: str, overrides: Dict[str, Any]):
     """
     Register environment overrides for a specific task/rollout.
@@ -566,7 +562,7 @@ def register_task_env_overrides(task_id: str, overrides: Dict[str, Any]):
         task_id: The rollout's unique task identifier
         overrides: Dict of config keys to override
     """
-    _task_env_overrides[task_id] = overrides
+    _register_task_env_overrides_impl(task_id, overrides)
 
 
 def clear_task_env_overrides(task_id: str):
@@ -575,7 +571,7 @@ def clear_task_env_overrides(task_id: str):
 
     Called during cleanup to avoid stale entries accumulating.
     """
-    _task_env_overrides.pop(task_id, None)
+    _clear_task_env_overrides_impl(task_id)
 
 # Configuration from environment variables
 
@@ -595,12 +591,10 @@ def _parse_env_var(name: str, default: str, converter=int, type_label: str = "in
         )
 
 
-def _get_env_config() -> Dict[str, Any]:
-    """Get terminal environment configuration from environment variables."""
-    # Default image with Python and Node.js for maximum compatibility
+def _build_env_config(env_type: str) -> Dict[str, Any]:
+    """Build terminal environment configuration for an explicit backend."""
     default_image = "nikolaik/python-nodejs:python3.11-nodejs20"
-    env_type = os.getenv("TERMINAL_ENV", "local")
-    
+    env_type = str(env_type or "local").strip().lower() or "local"
     mount_docker_cwd = os.getenv("TERMINAL_DOCKER_MOUNT_CWD_TO_WORKSPACE", "false").lower() in ("true", "1", "yes")
 
     # Default cwd: local uses the host's current directory, everything
@@ -644,6 +638,7 @@ def _get_env_config() -> Dict[str, Any]:
         "modal_mode": coerce_modal_mode(os.getenv("TERMINAL_MODAL_MODE", "auto")),
         "docker_image": os.getenv("TERMINAL_DOCKER_IMAGE", default_image),
         "docker_forward_env": _parse_env_var("TERMINAL_DOCKER_FORWARD_ENV", "[]", json.loads, "valid JSON"),
+        "docker_env": _parse_env_var("TERMINAL_DOCKER_ENV", "{}", json.loads, "valid JSON"),
         "singularity_image": os.getenv("TERMINAL_SINGULARITY_IMAGE", f"docker://{default_image}"),
         "modal_image": os.getenv("TERMINAL_MODAL_IMAGE", default_image),
         "daytona_image": os.getenv("TERMINAL_DAYTONA_IMAGE", default_image),
@@ -672,6 +667,11 @@ def _get_env_config() -> Dict[str, Any]:
         "container_persistent": os.getenv("TERMINAL_CONTAINER_PERSISTENT", "true").lower() in ("true", "1", "yes"),
         "docker_volumes": _parse_env_var("TERMINAL_DOCKER_VOLUMES", "[]", json.loads, "valid JSON"),
     }
+
+
+def _get_env_config() -> Dict[str, Any]:
+    """Get terminal environment configuration from environment variables."""
+    return _build_env_config(os.getenv("TERMINAL_ENV", "local"))
 
 
 def _get_modal_backend_state(modal_mode: object | None) -> Dict[str, Any]:
@@ -1157,31 +1157,15 @@ def terminal_tool(
                 "status": "error",
             }, ensure_ascii=False)
 
-        # Get configuration
-        config = _get_env_config()
-        env_type = config["env_type"]
-
         # Use task_id for environment isolation
         effective_task_id = task_id or "default"
 
-        # Check per-task overrides (set by environments like TerminalBench2Env)
-        # before falling back to global env var config
-        overrides = _task_env_overrides.get(effective_task_id, {})
-        
-        # Select image based on env type, with per-task override support
-        if env_type == "docker":
-            image = overrides.get("docker_image") or config["docker_image"]
-        elif env_type == "singularity":
-            image = overrides.get("singularity_image") or config["singularity_image"]
-        elif env_type == "modal":
-            image = overrides.get("modal_image") or config["modal_image"]
-        elif env_type == "daytona":
-            image = overrides.get("daytona_image") or config["daytona_image"]
-        else:
-            image = ""
-
-        cwd = overrides.get("cwd") or config["cwd"]
-        default_timeout = config["timeout"]
+        env_request = _build_task_environment_request(effective_task_id)
+        config = env_request["config"]
+        env_type = env_request["env_type"]
+        image = env_request["image"]
+        cwd = env_request["cwd"]
+        default_timeout = env_request["timeout"]
         effective_timeout = timeout or default_timeout
 
         # Reject foreground commands where the model explicitly requests
@@ -1230,44 +1214,20 @@ def terminal_tool(
                         _check_disk_usage_warning()
                     logger.info("Creating new %s environment for task %s...", env_type, effective_task_id[:8])
                     try:
-                        ssh_config = None
-                        if env_type == "ssh":
-                            ssh_config = {
-                                "host": config.get("ssh_host", ""),
-                                "user": config.get("ssh_user", ""),
-                                "port": config.get("ssh_port", 22),
-                                "key": config.get("ssh_key", ""),
-                                "persistent": config.get("ssh_persistent", False),
-                            }
-
-                        container_config = None
-                        if env_type in ("docker", "singularity", "modal", "daytona"):
-                            container_config = {
-                                "container_cpu": config.get("container_cpu", 1),
-                                "container_memory": config.get("container_memory", 5120),
-                                "container_disk": config.get("container_disk", 51200),
-                                "container_persistent": config.get("container_persistent", True),
-                                "modal_mode": config.get("modal_mode", "auto"),
-                                "docker_volumes": config.get("docker_volumes", []),
-                                "docker_mount_cwd_to_workspace": config.get("docker_mount_cwd_to_workspace", False),
-                            }
-
-                        local_config = None
-                        if env_type == "local":
-                            local_config = {
-                                "persistent": config.get("local_persistent", False),
-                            }
+                        env_request = _build_task_environment_request(
+                            effective_task_id, timeout=effective_timeout
+                        )
 
                         new_env = _create_environment(
-                            env_type=env_type,
-                            image=image,
-                            cwd=cwd,
-                            timeout=effective_timeout,
-                            ssh_config=ssh_config,
-                            container_config=container_config,
-                            local_config=local_config,
+                            env_type=env_request["env_type"],
+                            image=env_request["image"],
+                            cwd=env_request["cwd"],
+                            timeout=env_request["timeout"],
+                            ssh_config=env_request["ssh_config"],
+                            container_config=env_request["container_config"],
+                            local_config=env_request["local_config"],
                             task_id=effective_task_id,
-                            host_cwd=config.get("host_cwd"),
+                            host_cwd=env_request["host_cwd"],
                         )
                     except ImportError as e:
                         return json.dumps({
