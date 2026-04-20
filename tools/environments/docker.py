@@ -697,6 +697,8 @@ class DockerEnvironment(BaseEnvironment):
 
             self._container_id = result.stdout.strip()
             logger.info(f"Started container {container_name} ({self._container_id[:12]})")
+            if mount_runtime is not None:
+                _docker_mounts.register_task_container_id(task_id, self._container_id)
 
             # Build the init-time env forwarding args (used only by init_session
             # to inject host env vars into the snapshot; subsequent commands get

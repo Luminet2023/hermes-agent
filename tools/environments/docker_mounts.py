@@ -21,6 +21,7 @@ from tools.task_env_state import (
     clear_task_docker_mount_runtime,
     get_task_docker_mount_runtime,
     set_task_docker_mount_runtime,
+    update_task_docker_mount_runtime,
 )
 
 logger = logging.getLogger(__name__)
@@ -184,6 +185,8 @@ def _helper_command(
     slot_host_path: Path | None = None,
     source_path: Path | None = None,
     source_kind: str | None = None,
+    target_container_id: str | None = None,
+    container_mount_path: str | None = None,
 ) -> list[str]:
     command = [
         helper.wrapper,
@@ -199,6 +202,10 @@ def _helper_command(
         command.extend(["--source-path", str(source_path)])
     if source_kind:
         command.extend(["--source-kind", source_kind])
+    if target_container_id:
+        command.extend(["--target-container-id", target_container_id])
+    if container_mount_path:
+        command.extend(["--container-mount-path", container_mount_path])
     if helper.helper_image:
         command.extend(["--helper-image", helper.helper_image])
     if helper.helper_prepare_command:
@@ -216,6 +223,8 @@ def _run_helper_command(
     slot_host_path: Path | None = None,
     source_path: Path | None = None,
     source_kind: str | None = None,
+    target_container_id: str | None = None,
+    container_mount_path: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     command = _helper_command(
         subcommand,
@@ -226,6 +235,8 @@ def _run_helper_command(
         slot_host_path=slot_host_path,
         source_path=source_path,
         source_kind=source_kind,
+        target_container_id=target_container_id,
+        container_mount_path=container_mount_path,
     )
     try:
         completed = subprocess.run(
@@ -314,6 +325,7 @@ def prepare_task_mount_runtime(task_id: str) -> dict[str, Any] | None:
             "task_mount_root": str(task_root),
             "hub_host_path": str(hub_host_path),
             "hub_container_path": _HUB_CONTAINER_PATH,
+            "container_id": None,
             "helper_mode": settings.helper.mode,
             "helper_wrapper": settings.helper.wrapper,
             "helper_image": settings.helper.helper_image,
@@ -324,6 +336,15 @@ def prepare_task_mount_runtime(task_id: str) -> dict[str, Any] | None:
         }
         set_task_docker_mount_runtime(task_id, runtime)
         return runtime
+
+
+def register_task_container_id(task_id: str, container_id: str | None) -> dict[str, Any] | None:
+    """Persist the Docker container ID for an active task mount runtime."""
+    normalized_container_id = str(container_id or "").strip() or None
+    return update_task_docker_mount_runtime(
+        task_id,
+        {"container_id": normalized_container_id},
+    )
 
 
 def build_hub_mount_arg(runtime: dict[str, Any]) -> str:
@@ -406,8 +427,16 @@ def mount_host_path(task_id: str, host_path: str, *, readonly: bool = True) -> d
         task_root = Path(runtime["task_mount_root"])
         hub_host_path = Path(runtime["hub_host_path"])
         slot_host_path = hub_host_path / mount_id
+        container_mount_path = f"{runtime['hub_container_path']}/{mount_id}"
         source_kind = "dir" if resolved_host_path.is_dir() else "file"
         helper = _helper_from_runtime(runtime)
+        container_id = str(runtime.get("container_id") or "").strip()
+
+        if readonly and not container_id:
+            raise DockerMountError(
+                "Dynamic readonly mounts require an active Docker container ID. "
+                "Recreate the Docker sandbox and try again."
+            )
 
         _prepare_slot_placeholder(slot_host_path, source_kind)
         try:
@@ -430,6 +459,8 @@ def mount_host_path(task_id: str, host_path: str, *, readonly: bool = True) -> d
                         task_root=task_root,
                         hub_host_path=hub_host_path,
                         slot_host_path=slot_host_path,
+                        target_container_id=container_id,
+                        container_mount_path=container_mount_path,
                     )
                 except DockerMountError:
                     try:
@@ -457,7 +488,7 @@ def mount_host_path(task_id: str, host_path: str, *, readonly: bool = True) -> d
             "host_path": host_path,
             "resolved_host_path": str(resolved_host_path),
             "readonly": bool(readonly),
-            "container_path": f"{runtime['hub_container_path']}/{mount_id}",
+            "container_path": container_mount_path,
             "slot_host_path": str(slot_host_path),
             "source_kind": source_kind,
         }
@@ -467,7 +498,7 @@ def mount_host_path(task_id: str, host_path: str, *, readonly: bool = True) -> d
             "host_path": host_path,
             "readonly": bool(readonly),
             "mount_id": mount_id,
-            "container_path": f"{runtime['hub_container_path']}/{mount_id}",
+            "container_path": container_mount_path,
             "helper_mode": runtime["helper_mode"],
             "changed": True,
         }

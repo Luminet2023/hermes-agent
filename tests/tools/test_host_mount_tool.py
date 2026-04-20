@@ -119,6 +119,7 @@ def test_request_host_mount_noop_when_path_already_mounted(monkeypatch, tmp_path
 
 
 def test_request_host_mount_feature_disabled_rejects(monkeypatch):
+    monkeypatch.setenv("TERMINAL_ENV", "docker")
     monkeypatch.setattr(host_mount_tool, "load_docker_mount_settings", lambda: _settings(enabled=False))
     result = json.loads(
         host_mount_tool.request_host_mount(
@@ -132,19 +133,66 @@ def test_request_host_mount_feature_disabled_rejects(monkeypatch):
     assert "disabled" in result["message"].lower()
 
 
-def test_request_host_mount_rejects_non_docker_backend(monkeypatch):
+def test_request_host_mount_local_backend_is_noop_without_approval(monkeypatch, tmp_path):
+    source_dir = tmp_path / "local-ok"
+    source_dir.mkdir()
     monkeypatch.setenv("TERMINAL_ENV", "local")
-    monkeypatch.setattr(host_mount_tool, "load_docker_mount_settings", lambda: _settings(enabled=True))
+    approval_mock = MagicMock()
+    monkeypatch.setattr(host_mount_tool, "_validate_local_host_path", lambda path: source_dir.resolve())
+    monkeypatch.setattr(host_mount_tool, "request_operation_approval", approval_mock)
 
     result = json.loads(
         host_mount_tool.request_host_mount(
-            "/tmp/blocked",
+            str(source_dir),
+            task_id="task-local",
+        )
+    )
+
+    assert result["success"] is True
+    assert result["approval"] == {"required": False, "approved": True, "choice": "once"}
+    assert result["mount_id"] is None
+    assert result["container_path"] == str(source_dir.resolve())
+    assert result["helper_mode"] == "local-direct"
+    assert result["changed"] is False
+    approval_mock.assert_not_called()
+
+
+def test_request_host_mount_local_backend_rejects_critical_paths(monkeypatch):
+    monkeypatch.setenv("TERMINAL_ENV", "local")
+    approval_mock = MagicMock()
+    monkeypatch.setattr(
+        host_mount_tool,
+        "_validate_local_host_path",
+        MagicMock(side_effect=host_mount_tool.DockerMountError("Refusing to expose critical host path in local mode: /etc")),
+    )
+    monkeypatch.setattr(host_mount_tool, "request_operation_approval", approval_mock)
+
+    result = json.loads(
+        host_mount_tool.request_host_mount(
+            "/etc",
             task_id="task-local",
         )
     )
 
     assert result["success"] is False
-    assert "only works for Docker tasks" in result["message"]
+    assert result["helper_mode"] == "local-direct"
+    assert "critical host path" in result["message"]
+    approval_mock.assert_not_called()
+
+
+def test_request_host_mount_rejects_non_docker_non_local_backend(monkeypatch):
+    monkeypatch.setenv("TERMINAL_ENV", "ssh")
+    monkeypatch.setattr(host_mount_tool, "load_docker_mount_settings", lambda: _settings(enabled=True))
+
+    result = json.loads(
+        host_mount_tool.request_host_mount(
+            "/tmp/blocked",
+            task_id="task-ssh",
+        )
+    )
+
+    assert result["success"] is False
+    assert "only supports docker sandboxes or local/host tasks" in result["message"].lower()
 
 
 @pytest.mark.parametrize(

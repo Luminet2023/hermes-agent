@@ -120,6 +120,7 @@ def test_mount_host_path_rolls_back_when_readonly_remount_fails(monkeypatch, tmp
     monkeypatch.setattr(docker_mounts.subprocess, "run", _run)
 
     docker_mounts.prepare_task_mount_runtime("task-readonly")
+    docker_mounts.register_task_container_id("task-readonly", "container-123")
 
     with pytest.raises(docker_mounts.DockerMountError, match="readonly failed"):
         docker_mounts.mount_host_path("task-readonly", str(source_dir), readonly=True)
@@ -134,6 +135,34 @@ def test_mount_host_path_rolls_back_when_readonly_remount_fails(monkeypatch, tmp
         "remount-readonly",
         "unbind",
     ]
+    remount_cmd = calls[2]
+    assert "--target-container-id" in remount_cmd
+    assert "container-123" in remount_cmd
+    assert "--container-mount-path" in remount_cmd
+    assert "/__hermes_host_mounts/mount-0001" in remount_cmd
+
+
+def test_readonly_mount_requires_active_container_id(monkeypatch, tmp_path):
+    calls = []
+    config = _mount_config(tmp_path)
+    allowed_root = Path(config["terminal"]["docker_dynamic_mounts_allowed_roots"][0])
+    source_dir = allowed_root / "readonly"
+    source_dir.mkdir()
+
+    monkeypatch.setattr(docker_mounts, "load_config", lambda: config)
+    monkeypatch.setattr(docker_mounts, "_validate_wrapper_path", lambda wrapper: str(wrapper))
+    monkeypatch.setattr(
+        docker_mounts.subprocess,
+        "run",
+        lambda cmd, **kwargs: calls.append(list(cmd)) or subprocess.CompletedProcess(cmd, 0, stdout="", stderr=""),
+    )
+
+    docker_mounts.prepare_task_mount_runtime("task-no-container-id")
+
+    with pytest.raises(docker_mounts.DockerMountError, match="container ID"):
+        docker_mounts.mount_host_path("task-no-container-id", str(source_dir), readonly=True)
+
+    assert [cmd[1] for cmd in calls] == ["prepare-hub"]
 
 
 def test_cleanup_task_mounts_invokes_cleanup_and_clears_state(monkeypatch, tmp_path):
