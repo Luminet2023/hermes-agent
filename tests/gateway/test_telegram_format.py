@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gateway.config import PlatformConfig
+from gateway.stream_consumer import GatewayStreamConsumer
 
 
 # ---------------------------------------------------------------------------
@@ -708,3 +709,29 @@ async def test_send_escapes_chunk_indicator_for_markdownv2(adapter):
     assert len(sent_texts) > 1
     assert re.search(r" \\\([0-9]+/[0-9]+\\\)$", sent_texts[0])
     assert re.search(r" \\\([0-9]+/[0-9]+\\\)$", sent_texts[-1])
+
+
+@pytest.mark.asyncio
+async def test_stream_consumer_telegram_edits_accept_finalize_flags(adapter):
+    adapter._bot = MagicMock()
+    adapter._bot.send_message = AsyncMock(return_value=MagicMock(message_id=1))
+    adapter._bot.edit_message_text = AsyncMock()
+
+    consumer = GatewayStreamConsumer(adapter, "123")
+
+    assert await consumer._send_or_edit("Working")
+    assert await consumer._send_or_edit("Working harder", finalize=False)
+    assert await consumer._send_or_edit("Done now", finalize=True)
+
+    assert adapter._bot.edit_message_text.await_count == 2
+
+    first_edit = adapter._bot.edit_message_text.await_args_list[0].kwargs
+    final_edit = adapter._bot.edit_message_text.await_args_list[1].kwargs
+
+    assert first_edit["chat_id"] == 123
+    assert first_edit["message_id"] == 1
+    assert first_edit["text"] == "Working harder"
+
+    assert final_edit["chat_id"] == 123
+    assert final_edit["message_id"] == 1
+    assert final_edit["text"] == "Done now"

@@ -206,6 +206,7 @@ def test_dynamic_mount_feature_adds_shared_hub_mount(monkeypatch):
     calls = _mock_subprocess_run(monkeypatch)
 
     prepare_calls = []
+    register_calls = []
     monkeypatch.setattr(
         docker_env._docker_mounts,
         "prepare_task_mount_runtime",
@@ -223,6 +224,11 @@ def test_dynamic_mount_feature_adds_shared_hub_mount(monkeypatch):
             "dst=/__hermes_host_mounts,bind-propagation=rshared"
         ),
     )
+    monkeypatch.setattr(
+        docker_env._docker_mounts,
+        "register_task_container_id",
+        lambda task_id, container_id: register_calls.append((task_id, container_id)),
+    )
 
     env = _make_dummy_env(task_id="task-dynamic-hub")
 
@@ -238,6 +244,7 @@ def test_dynamic_mount_feature_adds_shared_hub_mount(monkeypatch):
     assert env._mount_hub_host_path == "/tmp/hermes-docker-mounts/task/hub"
     assert env._mount_hub_container_path == "/__hermes_host_mounts"
     assert env._mount_helper_mode == "host-nsenter"
+    assert register_calls == [("task-dynamic-hub", "fake-container-id")]
 
 
 def test_dynamic_mount_feature_disabled_keeps_default_docker_behavior(monkeypatch):

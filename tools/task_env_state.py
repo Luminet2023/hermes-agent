@@ -85,6 +85,21 @@ def set_task_docker_mount_runtime(task_id: str, runtime: Dict[str, Any]) -> None
         _task_env_overrides[task_id] = current
 
 
+def update_task_docker_mount_runtime(task_id: str, updates: Dict[str, Any]) -> Dict[str, Any] | None:
+    """Merge top-level Docker mount runtime updates for *task_id* and return the new runtime."""
+    task_id = task_id or "default"
+    with _task_env_lock:
+        current = dict(_task_env_overrides.get(task_id, {}))
+        runtime = current.get(_DOCKER_MOUNT_RUNTIME_KEY)
+        if runtime is None:
+            return None
+        merged_runtime = copy.deepcopy(runtime)
+        merged_runtime.update(copy.deepcopy(updates or {}))
+        current[_DOCKER_MOUNT_RUNTIME_KEY] = merged_runtime
+        _task_env_overrides[task_id] = current
+        return copy.deepcopy(merged_runtime)
+
+
 def clear_task_docker_mount_runtime(task_id: str) -> None:
     """Remove Docker dynamic mount runtime metadata for *task_id*."""
     remove_task_env_override_keys(task_id or "default", _DOCKER_MOUNT_RUNTIME_KEY)
