@@ -256,7 +256,6 @@ def _get_file_ops(task_id: str = "default") -> ShellFileOperations:
             config = env_request["config"]
             env_type = env_request["env_type"]
             logger.info("Creating new %s environment for task %s...", env_type, task_id[:8])
-
             terminal_env = _create_environment(
                 env_type=env_request["env_type"],
                 image=env_request["image"],
