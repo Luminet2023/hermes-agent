@@ -246,7 +246,24 @@ const ComposerPane = memo(function ComposerPane({
         <Box height={1} onMouseDown={captureInputDrag} onMouseDrag={dragFromSpacer} onMouseUp={endInputDrag} />
       )}
 
-      <StatusRulePane at="top" composer={composer} status={status} />
+      <Box flexDirection="column" position="relative">
+        {ui.statusBar && (
+          <StatusRule
+            bgCount={ui.bgTasks.size}
+            busy={ui.busy}
+            cols={composer.cols}
+            cwdLabel={status.cwdLabel}
+            model={ui.info?.model?.split('/').pop() ?? ''}
+            sessionStartedAt={status.sessionStartedAt}
+            showCost={ui.showCost}
+            status={ui.status}
+            statusColor={status.statusColor}
+            t={ui.theme}
+            turnStartedAt={status.turnStartedAt}
+            usage={ui.usage}
+            voiceLabel={status.voiceLabel}
+          />
+        )}
 
       <Box flexDirection="column" marginTop={ui.statusBar === 'top' ? 0 : 1} position="relative">
         <FloatingOverlays

@@ -1,6 +1,4 @@
-import { useState, useRef, useEffect } from "react";
-import { Button } from "@nous-research/ui/ui/components/button";
-import { Typography } from "@/components/NouiTypography";
+import { Typography } from "@nous-research/ui";
 import { useI18n } from "@/i18n/context";
 import { LOCALE_META } from "@/i18n";
 import type { Locale } from "@/i18n";
@@ -44,57 +42,23 @@ export function LanguageSwitcher() {
   const allLocales = Object.entries(LOCALE_META) as Array<[Locale, typeof current]>;
 
   return (
-    <div ref={containerRef} className="relative inline-flex">
-      <Button
-        ghost
-        onClick={() => setOpen((v) => !v)}
-        title={t.language.switchTo}
-        aria-label={t.language.switchTo}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        className="px-2 py-1 normal-case tracking-normal font-normal text-xs text-muted-foreground hover:text-foreground"
+    <button
+      type="button"
+      onClick={toggle}
+      className="group relative inline-flex items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      title={t.language.switchTo}
+      aria-label={t.language.switchTo}
+    >
+      {/* Show the *current* language's flag — tooltip advertises the click action */}
+      <span className="text-base leading-none">
+        {locale === "en" ? "🇬🇧" : "🇨🇳"}
+      </span>
+      <Typography
+        mondwest
+        className="hidden sm:inline tracking-wide uppercase text-[0.65rem]"
       >
-        <span className="inline-flex items-center gap-1.5">
-          <span className="text-base leading-none">{current.flag}</span>
-          <Typography
-            mondwest
-            className="hidden sm:inline tracking-wide uppercase text-[0.65rem]"
-          >
-            {locale === "en" ? "EN" : current.name}
-          </Typography>
-        </span>
-      </Button>
-
-      {open && (
-        <div
-          role="listbox"
-          aria-label={t.language.switchTo}
-          className="absolute right-0 top-full mt-1 z-50 min-w-[10rem] rounded-md border border-border bg-popover shadow-md py-1 max-h-80 overflow-y-auto"
-        >
-          {allLocales.map(([code, meta]) => {
-            const selected = code === locale;
-            return (
-              <button
-                key={code}
-                role="option"
-                aria-selected={selected}
-                onClick={() => {
-                  setLocale(code);
-                  setOpen(false);
-                }}
-                className={
-                  "w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-accent hover:text-accent-foreground transition-colors " +
-                  (selected ? "font-semibold text-foreground" : "text-muted-foreground")
-                }
-              >
-                <span className="text-base leading-none">{meta.flag}</span>
-                <span className="truncate">{meta.name}</span>
-                {selected && <span className="ml-auto text-xs">✓</span>}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
+        {locale === "en" ? "EN" : "中文"}
+      </Typography>
+    </button>
   );
 }

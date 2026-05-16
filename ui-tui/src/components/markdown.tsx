@@ -2,8 +2,6 @@ import { Box, Link, stringWidth, Text } from '@hermes/ink'
 import { Fragment, memo, type ReactNode, useMemo } from 'react'
 
 import { ensureEmojiPresentation } from '../lib/emoji.js'
-import { normalizeExternalUrl, urlSlugTitleLabel, useLinkTitle } from '../lib/externalLink.js'
-import { BOX_CLOSE, BOX_OPEN, texToUnicode } from '../lib/mathUnicode.js'
 import { highlightLine, isHighlightable } from '../lib/syntax.js'
 import type { Theme } from '../theme.js'
 
@@ -71,57 +69,11 @@ const QUOTE_RE = /^\s*(?:>\s*)+/
 const TABLE_DIVIDER_CELL_RE = /^:?-{3,}:?$/
 const MD_URL_RE = '((?:[^\\s()]|\\([^\\s()]*\\))+?)'
 
-// Display math openers: `$$ ... $$` (TeX) and `\[ ... \]` (LaTeX). The
-// opener is matched only when `$$` / `\[` appears at the very start of the
-// trimmed line — `startsWith('$$')` used to fire on prose like
-// `$$x+y$$ followed by more`, opening a block that never closed because the
-// trailing `$$` on the same line was invisible to the close-scan loop.
-const MATH_BLOCK_OPEN_RE = /^\s*(\$\$|\\\[)(.*)$/
-const MATH_BLOCK_CLOSE_DOLLAR_RE = /^(.*?)\$\$\s*$/
-const MATH_BLOCK_CLOSE_BRACKET_RE = /^(.*?)\\\]\s*$/
-
 export const MEDIA_LINE_RE = /^\s*[`"']?MEDIA:\s*(\S+?)[`"']?\s*$/
 export const AUDIO_DIRECTIVE_RE = /^\s*\[\[audio_as_voice\]\]\s*$/
 
-// Inline markdown tokens, in priority order. The outer regex picks the
-// leftmost match at each position, preferring earlier alternatives on tie —
-// so `**` must come before `*`, `__` before `_`, etc. Each pattern owns its
-// own capture groups; MdInline dispatches on which group matched.
-//
-// Subscript (`~x~`) is restricted to short alphanumeric runs so prose like
-// `thing ~! more ~?` from Kimi / Qwen / GLM (kaomoji-style decorators)
-// doesn't pair up the first `~` with the next one on the line and swallow
-// the text between them as a dim `_`-prefixed span.
-//
-// Inline math (`$x$` and `\(x\)`) takes precedence over emphasis at the
-// same start position because regex alternation is leftmost-first; a
-// dollar-delimited span at column N wins over a `*` at column N+1, so
-// `$P=a*b*c$` renders as math instead of having `*b*` corrupted into
-// italics. Single-character minimums and "no space adjacent to delimiter"
-// rules keep currency prose like `$5 to $10` from being swallowed.
 export const INLINE_RE = new RegExp(
-  [
-    `!\\[(.*?)\\]\\(${MD_URL_RE}\\)`, // 1,2  image
-    `\\[(.+?)\\]\\(${MD_URL_RE}\\)`, // 3,4  link
-    `<((?:https?:\\/\\/|mailto:)[^>\\s]+|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,})>`, // 5   autolink
-    `~~(.+?)~~`, // 6    strike
-    `\`([^\\\`]+)\``, // 7    code
-    `\\*\\*(.+?)\\*\\*`, // 8    bold *
-    `(?<!\\w)__(.+?)__(?!\\w)`, // 9    bold _
-    `\\*(.+?)\\*`, // 10   italic *
-    `(?<!\\w)_(.+?)_(?!\\w)`, // 11   italic _
-    `==(.+?)==`, // 12   highlight
-    `\\[\\^([^\\]]+)\\]`, // 13   footnote ref
-    `\\^([^^\\s][^^]*?)\\^`, // 14   superscript
-    `~([A-Za-z0-9]{1,8})~`, // 15   subscript
-    `(https?:\\/\\/[^\\s<]+)`, // 16   bare URL — wrapped so it owns its own
-    //                                capture group; without this, the math
-    //                                spans below would land in m[16] and the
-    //                                MdInline dispatcher would treat them as
-    //                                bare URLs and render them as autolinks.
-    `(?<!\\$)\\$([^\\s$](?:[^$\\n]*?[^\\s$])?)\\$(?!\\$)`, // 17   inline math $...$
-    `\\\\\\(([^\\n]+?)\\\\\\)` // 18   inline math \(...\)
-  ].join('|'),
+  `(!\\[(.*?)\\]\\(${MD_URL_RE}\\)|\\[(.+?)\\]\\(${MD_URL_RE}\\)|<((?:https?:\\/\\/|mailto:)[^>\\s]+|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,})>|~~(.+?)~~|\`([^\\\`]+)\`|\\*\\*(.+?)\\*\\*|(?<!\\w)__(.+?)__(?!\\w)|\\*(.+?)\\*|(?<!\\w)_(.+?)_(?!\\w)|==(.+?)==|\\[\\^([^\\]]+)\\]|\\^([^^\\s][^^]*?)\\^|~([^~\\s][^~]*?)~|(https?:\\/\\/[^\\s<]+))`,
   'g'
 )
 
@@ -141,49 +93,8 @@ const isTableDivider = (row: string) => {
   return cells.length > 1 && cells.every(c => TABLE_DIVIDER_CELL_RE.test(c))
 }
 
-const autolinkUrl = (raw: string) =>
-  raw.startsWith('mailto:') || raw.startsWith('http') || !raw.includes('@') ? raw : `mailto:${raw}`
-
-const defaultLinkLabel = (url: string) =>
-  url.startsWith('mailto:') ? url.replace(/^mailto:/, '') : /^https?:\/\//i.test(url) ? urlSlugTitleLabel(url) : url
-
-const pickFallbackLabel = (label: string | undefined, target: string): string | undefined => {
-  const trimmed = label?.trim()
-
-  if (!trimmed) {
-    return undefined
-  }
-
-  return normalizeExternalUrl(trimmed) === target ? undefined : trimmed
-}
-
-interface ResolvedLinkProps {
-  fallbackLabel?: string
-  t: Theme
-  url: string
-}
-
-function ResolvedLink({ fallbackLabel, t, url }: ResolvedLinkProps) {
-  const fetched = useLinkTitle(url)
-  const display = fetched || fallbackLabel || defaultLinkLabel(url)
-
-  return (
-    <Link url={url}>
-      <Text color={t.color.accent} underline>
-        {display}
-      </Text>
-    </Link>
-  )
-}
-
-const renderResolvedLink = (k: number, t: Theme, rawUrl: string, label?: string) => {
-  const target = normalizeExternalUrl(rawUrl)
-
-  return <ResolvedLink fallbackLabel={pickFallbackLabel(label, target)} key={k} t={t} url={target} />
-}
-
-export const stripInlineMarkup = (v: string) =>
-  v
+export const stripInlineMarkup = (value: string) =>
+  value
     .replace(/!\[(.*?)\]\(((?:[^\s()]|\([^\s()]*\))+?)\)/g, '[image: $1] $2')
     .replace(/\[(.+?)\]\(((?:[^\s()]|\([^\s()]*\))+?)\)/g, '$1')
     .replace(/<((?:https?:\/\/|mailto:)[^>\s]+|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})>/g, '$1')
@@ -641,9 +552,9 @@ const cacheSet = (b: Map<string, ReactNode[]>, key: string, v: ReactNode[]) => {
 
 function MdImpl({ cols, compact, t, text }: MdProps) {
   const nodes = useMemo(() => {
-    const bucket = cacheBucket(t)
-    const cacheKey = `${compact ? '1' : '0'}|${cols ?? ''}|${text}`
-    const cached = cacheGet(bucket, cacheKey)
+    const lines = ensureEmojiPresentation(text).split('\n')
+    const nodes: ReactNode[] = []
+    let i = 0
 
     if (cached) {
       return cached
@@ -690,17 +601,20 @@ function MdImpl({ cols, compact, t, text }: MdProps) {
         continue
       }
 
-      const media = line.match(MEDIA_LINE_RE)?.[1]
+      const media = line.match(MEDIA_LINE_RE)
 
       if (media) {
         start('paragraph')
-        nodes.push(
-          <Text color={t.color.muted} key={key} wrap="wrap-trim">
-            {'▸ '}
 
-            <Link url={/^(?:\/|[a-z]:[\\/])/i.test(media) ? `file://${media}` : media}>
-              <Text color={t.color.accent} underline>
-                {media}
+        const path = media[1]!
+        const url = /^(?:\/|[a-z]:[\\/])/i.test(path) ? `file://${path}` : path
+
+        nodes.push(
+          <Text color={t.color.dim} key={key}>
+            {'▸ '}
+            <Link url={url}>
+              <Text color={t.color.amber} underline>
+                {path}
               </Text>
             </Link>
           </Text>
@@ -710,7 +624,7 @@ function MdImpl({ cols, compact, t, text }: MdProps) {
         continue
       }
 
-      const fence = line.match(FENCE_RE)
+      const fence = parseFence(line)
 
       if (fence) {
         const char = fence[1]![0] as '`' | '~'

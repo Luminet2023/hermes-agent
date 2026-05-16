@@ -176,12 +176,11 @@ export function OAuthProvidersCard({ onError, onSuccess }: Props) {
                     </div>
                     {p.status.logged_in && p.status.token_preview && (
                       <code className="text-xs font-mono-ui truncate">
-                        <span className="opacity-50">token </span>
+                        <span className="opacity-50">token{" "}</span>
                         {p.status.token_preview}
                         {p.status.source_label && (
                           <span className="opacity-40">
-                            {" "}
-                            · {p.status.source_label}
+                            {" "}· {p.status.source_label}
                           </span>
                         )}
                       </code>

@@ -289,14 +289,34 @@ class TestCheckFnExceptionHandling:
 
 
 class TestBuiltinDiscovery:
-    def test_discovers_all_real_self_registering_builtin_tool_modules(self):
-        tools_dir = Path(__file__).resolve().parents[2] / "tools"
-        expected = [
-            f"tools.{path.stem}"
-            for path in sorted(tools_dir.glob("*.py"))
-            if path.name not in {"__init__.py", "registry.py", "mcp_tool.py"}
-            and _module_registers_tools(path)
-        ]
+    def test_matches_previous_manual_builtin_tool_set(self):
+        expected = {
+            "tools.browser_cdp_tool",
+            "tools.browser_tool",
+            "tools.clarify_tool",
+            "tools.code_execution_tool",
+            "tools.cronjob_tools",
+            "tools.delegate_tool",
+            "tools.discord_tool",
+            "tools.feishu_doc_tool",
+            "tools.feishu_drive_tool",
+            "tools.file_tools",
+            "tools.homeassistant_tool",
+            "tools.image_generation_tool",
+            "tools.memory_tool",
+            "tools.mixture_of_agents_tool",
+            "tools.process_registry",
+            "tools.rl_training_tool",
+            "tools.send_message_tool",
+            "tools.session_search_tool",
+            "tools.skill_manager_tool",
+            "tools.skills_tool",
+            "tools.terminal_tool",
+            "tools.todo_tool",
+            "tools.tts_tool",
+            "tools.vision_tools",
+            "tools.web_tools",
+        }
 
         with patch("tools.registry.importlib.import_module"):
             imported = discover_builtin_tools(tools_dir)

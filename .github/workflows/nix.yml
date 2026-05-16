@@ -23,18 +23,6 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: ./.github/actions/nix-setup
-        with:
-          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-
-      - name: Resolve head SHA
-        if: github.event_name == 'pull_request'
-        id: sha
-        shell: bash
-        run: |
-          FULL="${{ github.event.pull_request.head.sha || github.sha }}"
-          echo "full=$FULL" >> "$GITHUB_OUTPUT"
-          echo "short=${FULL:0:7}" >> "$GITHUB_OUTPUT"
-
       - name: Check flake
         id: flake
         if: runner.os == 'Linux'

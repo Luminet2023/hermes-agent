@@ -1,10 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useState } from "react";
-import { Clock, Pause, Play, Plus, Trash2, X, Zap } from "lucide-react";
-import { Badge } from "@nous-research/ui/ui/components/badge";
-import { Button } from "@nous-research/ui/ui/components/button";
-import { Select, SelectOption } from "@nous-research/ui/ui/components/select";
-import { Spinner } from "@nous-research/ui/ui/components/spinner";
-import { H2 } from "@/components/NouiTypography";
+import { useEffect, useState } from "react";
+import { Clock, Pause, Play, Plus, Trash2, Zap } from "lucide-react";
+import { H2 } from "@nous-research/ui";
 import { api } from "@/lib/api";
 import type { CronJob } from "@/lib/api";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
@@ -142,13 +138,13 @@ export default function CronPage() {
       if (isPaused) {
         await api.resumeCronJob(job.id);
         showToast(
-          `${t.cron.resume}: "${truncateText(getJobTitle(job), 30)}"`,
+          `${t.cron.resume}: "${job.name || job.prompt.slice(0, 30)}"`,
           "success",
         );
       } else {
         await api.pauseCronJob(job.id);
         showToast(
-          `${t.cron.pause}: "${truncateText(getJobTitle(job), 30)}"`,
+          `${t.cron.pause}: "${job.name || job.prompt.slice(0, 30)}"`,
           "success",
         );
       }
@@ -162,7 +158,7 @@ export default function CronPage() {
     try {
       await api.triggerCronJob(job.id);
       showToast(
-        `${t.cron.triggerNow}: "${truncateText(getJobTitle(job), 30)}"`,
+        `${t.cron.triggerNow}: "${job.name || job.prompt.slice(0, 30)}"`,
         "success",
       );
       loadJobs();
@@ -171,41 +167,18 @@ export default function CronPage() {
     }
   };
 
-  const jobDelete = useConfirmDelete({
-    onDelete: useCallback(
-      async (id: string) => {
-        const job = jobs.find((j) => j.id === id);
-        try {
-          await api.deleteCronJob(id);
-          showToast(
-            `${t.common.delete}: "${job ? truncateText(getJobTitle(job), 30) : id}"`,
-            "success",
-          );
-          loadJobs();
-        } catch (e) {
-          showToast(`${t.status.error}: ${e}`, "error");
-          throw e;
-        }
-      },
-      [jobs, loadJobs, showToast, t.common.delete, t.status.error],
-    ),
-  });
-
-  // Put "Create" button in page header
-  useLayoutEffect(() => {
-    setEnd(
-      <Button
-        size="sm"
-        onClick={() => setCreateModalOpen(true)}
-      >
-        <Plus className="h-3 w-3" />
-        {t.common.create}
-      </Button>,
-    );
-    return () => {
-      setEnd(null);
-    };
-  }, [setEnd, t.common.create, loading]);
+  const handleDelete = async (job: CronJob) => {
+    try {
+      await api.deleteCronJob(job.id);
+      showToast(
+        `${t.common.delete}: "${job.name || job.prompt.slice(0, 30)}"`,
+        "success",
+      );
+      loadJobs();
+    } catch (e) {
+      showToast(`${t.status.error}: ${e}`, "error");
+    }
+  };
 
   if (loading) {
     return (
@@ -282,60 +255,37 @@ export default function CronPage() {
               </div>
 
               <div className="grid gap-2">
-                <Label htmlFor="cron-prompt">{t.cron.prompt}</Label>
-                <textarea
-                  id="cron-prompt"
-                  className="flex min-h-[80px] w-full border border-border bg-background/40 px-3 py-2 text-sm font-courier shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground/30 focus-visible:border-foreground/25"
-                  placeholder={t.cron.promptPlaceholder}
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                />
+                <Label htmlFor="cron-deliver">{t.cron.deliverTo}</Label>
+                <Select
+                  id="cron-deliver"
+                  value={deliver}
+                  onValueChange={(v) => setDeliver(v)}
+                >
+                  <SelectOption value="local">
+                    {t.cron.delivery.local}
+                  </SelectOption>
+                  <SelectOption value="telegram">
+                    {t.cron.delivery.telegram}
+                  </SelectOption>
+                  <SelectOption value="discord">
+                    {t.cron.delivery.discord}
+                  </SelectOption>
+                  <SelectOption value="slack">
+                    {t.cron.delivery.slack}
+                  </SelectOption>
+                  <SelectOption value="email">
+                    {t.cron.delivery.email}
+                  </SelectOption>
+                </Select>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="grid gap-2">
-                  <Label htmlFor="cron-schedule">{t.cron.schedule}</Label>
-                  <Input
-                    id="cron-schedule"
-                    placeholder={t.cron.schedulePlaceholder}
-                    value={schedule}
-                    onChange={(e) => setSchedule(e.target.value)}
-                  />
-                </div>
-
-                <div className="grid gap-2">
-                  <Label htmlFor="cron-deliver">{t.cron.deliverTo}</Label>
-                  <Select
-                    id="cron-deliver"
-                    value={deliver}
-                    onValueChange={(v) => setDeliver(v)}
-                  >
-                    <SelectOption value="local">
-                      {t.cron.delivery.local}
-                    </SelectOption>
-                    <SelectOption value="telegram">
-                      {t.cron.delivery.telegram}
-                    </SelectOption>
-                    <SelectOption value="discord">
-                      {t.cron.delivery.discord}
-                    </SelectOption>
-                    <SelectOption value="slack">
-                      {t.cron.delivery.slack}
-                    </SelectOption>
-                    <SelectOption value="email">
-                      {t.cron.delivery.email}
-                    </SelectOption>
-                  </Select>
-                </div>
-              </div>
-
-              <div className="flex justify-end">
+              <div className="flex items-end">
                 <Button
-                  size="sm"
                   onClick={handleCreate}
                   disabled={creating}
-                  prefix={creating ? <Spinner /> : <Plus />}
+                  className="w-full"
                 >
+                  <Plus className="h-3 w-3" />
                   {creating ? t.common.creating : t.common.create}
                 </Button>
               </div>
@@ -361,90 +311,87 @@ export default function CronPage() {
           </Card>
         )}
 
-        {jobs.map((job) => {
-          const state = getJobState(job);
-          const promptText = getJobPrompt(job);
-          const title = getJobTitle(job);
-          const hasName = Boolean(getJobName(job));
-          const deliver = asText(job.deliver);
-
-          return (
-            <Card key={job.id}>
-              <CardContent className="flex items-center gap-4 py-4">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="font-medium text-sm truncate">
-                      {title}
-                    </span>
-                    <Badge tone={STATUS_TONE[state] ?? "secondary"}>
-                      {state}
-                    </Badge>
-                    {deliver && deliver !== "local" && (
-                      <Badge tone="outline">{deliver}</Badge>
-                    )}
-                  </div>
-                  {hasName && promptText && (
-                    <p className="text-xs text-muted-foreground truncate mb-1">
-                      {truncateText(promptText, 100)}
-                    </p>
-                  )}
-                  <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                    <span className="font-mono">{getJobScheduleDisplay(job)}</span>
-                    <span>
-                      {t.cron.last}: {formatTime(job.last_run_at)}
-                    </span>
-                    <span>
-                      {t.cron.next}: {formatTime(job.next_run_at)}
-                    </span>
-                  </div>
-                  {job.last_error && (
-                    <p className="text-xs text-destructive mt-1">
-                      {job.last_error}
-                    </p>
+        {jobs.map((job) => (
+          <Card key={job.id}>
+            <CardContent className="flex items-center gap-4 py-4">
+              {/* Info */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="font-medium text-sm truncate">
+                    {job.name ||
+                      job.prompt.slice(0, 60) +
+                        (job.prompt.length > 60 ? "..." : "")}
+                  </span>
+                  <Badge variant={STATUS_VARIANT[job.state] ?? "secondary"}>
+                    {job.state}
+                  </Badge>
+                  {job.deliver && job.deliver !== "local" && (
+                    <Badge variant="outline">{job.deliver}</Badge>
                   )}
                 </div>
-
-                <div className="flex items-center gap-1 shrink-0">
-                  <Button
-                    ghost
-                    size="icon"
-                    title={state === "paused" ? t.cron.resume : t.cron.pause}
-                    aria-label={
-                      state === "paused" ? t.cron.resume : t.cron.pause
-                    }
-                    onClick={() => handlePauseResume(job)}
-                    className={
-                      state === "paused" ? "text-success" : "text-warning"
-                    }
-                  >
-                    {state === "paused" ? <Play /> : <Pause />}
-                  </Button>
-
-                  <Button
-                    ghost
-                    size="icon"
-                    title={t.cron.triggerNow}
-                    aria-label={t.cron.triggerNow}
-                    onClick={() => handleTrigger(job)}
-                  >
-                    <Zap />
-                  </Button>
-
-                  <Button
-                    ghost
-                    destructive
-                    size="icon"
-                    title={t.common.delete}
-                    aria-label={t.common.delete}
-                    onClick={() => jobDelete.requestDelete(job.id)}
-                  >
-                    <Trash2 />
-                  </Button>
+                {job.name && (
+                  <p className="text-xs text-muted-foreground truncate mb-1">
+                    {job.prompt.slice(0, 100)}
+                    {job.prompt.length > 100 ? "..." : ""}
+                  </p>
+                )}
+                <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                  <span className="font-mono">{job.schedule_display}</span>
+                  <span>
+                    {t.cron.last}: {formatTime(job.last_run_at)}
+                  </span>
+                  <span>
+                    {t.cron.next}: {formatTime(job.next_run_at)}
+                  </span>
                 </div>
-              </CardContent>
-            </Card>
-          );
-        })}
+                {job.last_error && (
+                  <p className="text-xs text-destructive mt-1">
+                    {job.last_error}
+                  </p>
+                )}
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center gap-1 shrink-0">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  title={job.state === "paused" ? t.cron.resume : t.cron.pause}
+                  aria-label={
+                    job.state === "paused" ? t.cron.resume : t.cron.pause
+                  }
+                  onClick={() => handlePauseResume(job)}
+                >
+                  {job.state === "paused" ? (
+                    <Play className="h-4 w-4 text-success" />
+                  ) : (
+                    <Pause className="h-4 w-4 text-warning" />
+                  )}
+                </Button>
+
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  title={t.cron.triggerNow}
+                  aria-label={t.cron.triggerNow}
+                  onClick={() => handleTrigger(job)}
+                >
+                  <Zap className="h-4 w-4" />
+                </Button>
+
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  title={t.common.delete}
+                  aria-label={t.common.delete}
+                  onClick={() => handleDelete(job)}
+                >
+                  <Trash2 className="h-4 w-4 text-destructive" />
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
       <PluginSlot name="cron:bottom" />

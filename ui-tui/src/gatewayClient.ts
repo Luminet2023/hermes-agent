@@ -33,6 +33,9 @@ const resolveSidecarUrl = () => {
   return raw ? raw : null
 }
 
+const truncateLine = (line: string) =>
+  line.length > MAX_LOG_LINE_BYTES ? `${line.slice(0, MAX_LOG_LINE_BYTES)}… [truncated ${line.length} bytes]` : line
+
 const resolvePython = (root: string) => {
   const configured = process.env.HERMES_PYTHON?.trim() || process.env.PYTHON?.trim()
 
@@ -574,62 +577,6 @@ export class GatewayClient extends EventEmitter {
 
   getLogTail(limit = 20): string {
     return this.logs.tail(Math.max(1, limit)).join('\n')
-  }
-
-  private async ensureAttachedWebSocket(method: string): Promise<WebSocket> {
-    if (!this.attachUrl) {
-      throw new Error('gateway not running')
-    }
-
-    if (!this.ws || this.ws.readyState === WS_CLOSED || this.ws.readyState === WS_CLOSING) {
-      this.start()
-    }
-
-    if (this.ws?.readyState === WS_CONNECTING) {
-      try {
-        await this.wsConnectPromise
-      } catch (err) {
-        throw err instanceof Error ? err : new Error(String(err))
-      }
-    }
-
-    if (!this.ws || this.ws.readyState !== WS_OPEN) {
-      throw new Error(`gateway not connected: ${method}`)
-    }
-
-    return this.ws
-  }
-
-  private requestOverWebSocket<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-    return this.ensureAttachedWebSocket(method).then(
-      ws =>
-        new Promise<T>((resolve, reject) => {
-          const id = `r${++this.reqId}`
-          const timeout = setTimeout(this.onTimeout, REQUEST_TIMEOUT_MS, id)
-
-          timeout.unref?.()
-          this.pending.set(id, {
-            id,
-            method,
-            reject,
-            resolve: v => resolve(v as T),
-            timeout
-          })
-
-          try {
-            ws.send(JSON.stringify({ id, jsonrpc: '2.0', method, params }))
-          } catch (e) {
-            const pending = this.pending.get(id)
-
-            if (pending) {
-              clearTimeout(pending.timeout)
-              this.pending.delete(id)
-            }
-
-            reject(e instanceof Error ? e : new Error(String(e)))
-          }
-        })
-    )
   }
 
   request<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {

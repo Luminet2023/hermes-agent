@@ -28,7 +28,6 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger } from "@nous-research/ui/ui/components/tabs";
 import { useI18n } from "@/i18n";
-import { registerSlot, PluginSlot } from "./slots";
 
 // ---------------------------------------------------------------------------
 // Plugin registry — plugins call register() to add their component.

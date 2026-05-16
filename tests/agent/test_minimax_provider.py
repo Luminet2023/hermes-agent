@@ -79,9 +79,9 @@ class TestMinimaxAuxModel:
         assert _get_aux_model_for_provider("minimax-cn") == "MiniMax-M2.7"
 
     def test_minimax_aux_not_highspeed(self):
-        from agent.auxiliary_client import _get_aux_model_for_provider
-        assert "highspeed" not in _get_aux_model_for_provider("minimax")
-        assert "highspeed" not in _get_aux_model_for_provider("minimax-cn")
+        from agent.auxiliary_client import _API_KEY_PROVIDER_AUX_MODELS
+        assert "highspeed" not in _API_KEY_PROVIDER_AUX_MODELS["minimax"]
+        assert "highspeed" not in _API_KEY_PROVIDER_AUX_MODELS["minimax-cn"]
 
 
 class TestMinimaxBetaHeaders:

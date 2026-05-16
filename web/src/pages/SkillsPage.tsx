@@ -15,6 +15,7 @@ import {
   Zap,
   Filter,
 } from "lucide-react";
+import { H2 } from "@nous-research/ui";
 import { api } from "@/lib/api";
 import type { SkillInfo, ToolsetInfo } from "@/lib/api";
 import { useToast } from "@/hooks/useToast";
@@ -253,80 +254,119 @@ export default function SkillsPage() {
       <PluginSlot name="skills:top" />
       <Toast toast={toast} />
 
-      <div className="flex flex-col sm:flex-row sm:items-start gap-4">
-        <aside aria-label={t.skills.title} className="sm:w-56 sm:shrink-0">
-          <div className="sm:sticky sm:top-0">
-            <div
-              className={`
-                flex flex-col
-                border border-border bg-muted/20
-              `}
-            >
-              <div className="hidden sm:flex items-center gap-2 px-3 py-2 border-b border-border">
-                <Filter className="h-3 w-3 text-muted-foreground" />
-                <span className="font-mondwest text-[0.65rem] tracking-[0.12em] uppercase text-muted-foreground">
-                  {t.skills.filters}
+      {/* ═══════════════ Header ═══════════════ */}
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <Package className="h-5 w-5 text-muted-foreground" />
+          <H2 variant="sm">{t.skills.title}</H2>
+          <span className="text-xs text-muted-foreground">
+            {t.skills.enabledOf
+              .replace("{enabled}", String(enabledCount))
+              .replace("{total}", String(skills.length))}
+          </span>
+        </div>
+      </div>
+
+      {/* ═══════════════ Sidebar + Content ═══════════════ */}
+      <div
+        className="flex flex-col sm:flex-row gap-4"
+        style={{ minHeight: "calc(100vh - 180px)" }}
+      >
+        {/* ---- Sidebar ---- */}
+        <div className="sm:w-52 sm:shrink-0">
+          <div className="sm:sticky sm:top-[72px] flex flex-col gap-1">
+            {/* Search */}
+            <div className="relative mb-2 hidden sm:block">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                className="pl-8 h-8 text-xs"
+                placeholder={t.common.search}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              {search && (
+                <button
+                  type="button"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  onClick={() => setSearch("")}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+
+            {/* Top-level nav */}
+            <div className="flex sm:flex-col gap-1 overflow-x-auto sm:overflow-x-visible scrollbar-none pb-1 sm:pb-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setView("skills");
+                  setActiveCategory(null);
+                  setSearch("");
+                }}
+                className={`group flex items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors cursor-pointer ${
+                  view === "skills" && !isSearching
+                    ? "bg-primary/10 text-primary font-medium"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                }`}
+              >
+                <Package className="h-3.5 w-3.5 shrink-0" />
+                <span className="flex-1 truncate">
+                  {t.skills.all} ({skills.length})
                 </span>
-              </div>
+                {view === "skills" && !isSearching && (
+                  <ChevronRight className="h-3 w-3 text-primary/50 shrink-0" />
+                )}
+              </button>
 
-              <div className="flex sm:flex-col gap-1 overflow-x-auto sm:overflow-x-visible scrollbar-none p-2">
-                <PanelItem
-                  icon={Package}
-                  label={`${t.skills.all} (${skills.length})`}
-                  active={view === "skills" && !isSearching}
-                  onClick={() => {
-                    setView("skills");
-                    setActiveCategory(null);
-                    setSearch("");
-                  }}
-                />
-                <PanelItem
-                  icon={Wrench}
-                  label={`${t.skills.toolsets} (${toolsets.length})`}
-                  active={view === "toolsets"}
-                  onClick={() => {
-                    setView("toolsets");
-                    setSearch("");
-                  }}
-                />
-              </div>
-
+              {/* Skill categories (nested under All Skills) */}
               {view === "skills" &&
                 !isSearching &&
-                allCategories.length > 0 && (
-                  <div className="hidden sm:flex flex-col border-t border-border">
-                    <div className="px-3 pt-2 pb-1 font-mondwest text-[0.6rem] tracking-[0.12em] uppercase text-muted-foreground/70">
-                      {t.skills.categories}
-                    </div>
-                    <div className="flex flex-col p-2 pt-1 gap-px max-h-[calc(100vh-340px)] overflow-y-auto">
-                      {allCategories.map(({ key, name, count }) => {
-                        const isActive = activeCategory === key;
+                allCategories.map(({ key, name, count }) => {
+                  const isActive = activeCategory === key;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() =>
+                        setActiveCategory(activeCategory === key ? null : key)
+                      }
+                      className={`group flex items-center gap-2 px-2.5 py-1 pl-7 text-left text-[11px] transition-colors cursor-pointer ${
+                        isActive
+                          ? "text-primary font-medium"
+                          : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                      }`}
+                    >
+                      <span className="flex-1 truncate">{name}</span>
+                      <span
+                        className={`text-[10px] tabular-nums ${isActive ? "text-primary/60" : "text-muted-foreground/50"}`}
+                      >
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
 
-                        return (
-                          <ListItem
-                            key={key}
-                            active={isActive}
-                            onClick={() =>
-                              setActiveCategory(isActive ? null : key)
-                            }
-                            className="rounded-sm px-2 py-1 text-[11px]"
-                          >
-                            <span className="flex-1 truncate">{name}</span>
-                            <span
-                              className={`text-[10px] tabular-nums ${
-                                isActive
-                                  ? "text-foreground/60"
-                                  : "text-muted-foreground/50"
-                              }`}
-                            >
-                              {count}
-                            </span>
-                          </ListItem>
-                        );
-                      })}
-                    </div>
-                  </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setView("toolsets");
+                  setSearch("");
+                }}
+                className={`group flex items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors cursor-pointer ${
+                  view === "toolsets"
+                    ? "bg-primary/10 text-primary font-medium"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                }`}
+              >
+                <Wrench className="h-3.5 w-3.5 shrink-0" />
+                <span className="flex-1 truncate">
+                  {t.skills.toolsets} ({toolsets.length})
+                </span>
+                {view === "toolsets" && (
+                  <ChevronRight className="h-3 w-3 text-primary/50 shrink-0" />
                 )}
+              </button>
             </div>
           </div>
         </aside>
@@ -340,7 +380,7 @@ export default function SkillsPage() {
                     <Search className="h-4 w-4" />
                     {t.skills.title}
                   </CardTitle>
-                  <Badge tone="secondary" className="text-[10px]">
+                  <Badge variant="secondary" className="text-[10px]">
                     {t.skills.resultCount
                       .replace("{count}", String(searchMatchedSkills.length))
                       .replace(
@@ -384,7 +424,8 @@ export default function SkillsPage() {
                         )
                       : t.skills.all}
                   </CardTitle>
-                  <Badge tone="secondary" className="text-[10px]">
+                  <Badge variant="secondary" className="text-[10px]">
+                    {activeSkills.length}{" "}
                     {t.skills.skillCount
                       .replace("{count}", String(activeSkills.length))
                       .replace("{s}", activeSkills.length !== 1 ? "s" : "")}

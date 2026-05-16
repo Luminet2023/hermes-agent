@@ -306,8 +306,7 @@ class TestNormalizeLocalModel:
                  }), \
                  patch("tools.transcription_tools._local_model", None), \
                  patch("tools.transcription_tools._local_model_name", None), \
-                 patch.dict("sys.modules", {"faster_whisper": _fake_faster_whisper_module(mock_model)}):
-                mock_cls = __import__("faster_whisper").WhisperModel
+                 patch("faster_whisper.WhisperModel", return_value=mock_model) as mock_cls:
                 from tools.transcription_tools import transcribe_audio
                 transcribe_audio(audio_file)
                 # WhisperModel must NOT have been called with "whisper-1"

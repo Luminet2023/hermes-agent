@@ -4,15 +4,7 @@ import { type MutableRefObject, useEffect, useMemo, useRef, useState } from 'rea
 
 import { setInputSelection } from '../app/inputSelectionStore.js'
 import { readClipboardText, writeClipboardText } from '../lib/clipboard.js'
-import { cursorLayout, offsetFromPosition } from '../lib/inputMetrics.js'
-import {
-  DEFAULT_VOICE_RECORD_KEY,
-  isActionMod,
-  isMac,
-  isMacActionFallback,
-  isVoiceToggleKey,
-  type ParsedVoiceRecordKey
-} from '../lib/platform.js'
+import { isActionMod, isMac, isMacActionFallback } from '../lib/platform.js'
 
 type InkExt = typeof Ink & {
   stringWidth: (s: string) => number
@@ -370,12 +362,6 @@ export function TextInput({
   const pasteTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pastePos = useRef(0)
   const editVersionRef = useRef(0)
-  const parentChangeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const pendingParentValue = useRef<string | null>(null)
-  const localRenderTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const lineWidthRef = useRef(stringWidth(value.includes('\n') ? value.slice(value.lastIndexOf('\n') + 1) : value))
-  const mouseAnchorRef = useRef<null | number>(null)
-  const lastClickRef = useRef<{ at: number; offset: number }>({ at: 0, offset: -1 })
   const undo = useRef<{ cursor: number; value: string }[]>([])
   const redo = useRef<{ cursor: number; value: string }[]>([])
 
@@ -744,77 +730,40 @@ export function TextInput({
     commit(nextValue, nextCursor)
   }
 
-  const startMouseSelection = (next: number) => {
-    const c = snapPos(vRef.current, next)
-
-    mouseAnchorRef.current = c
-    selRef.current = { end: c, start: c }
-    setSel(null)
-    setCur(c)
-    curRef.current = c
-  }
-
-  const dragMouseSelection = (next: number) => {
-    if (mouseAnchorRef.current === null) {
-      return
-    }
-
-    const c = snapPos(vRef.current, next)
-    const range = { end: c, start: mouseAnchorRef.current }
-    selRef.current = range
-    setSel(range.start === range.end ? null : range)
-    setCur(c)
-    curRef.current = c
-  }
-
-  const endMouseSelection = () => {
-    mouseAnchorRef.current = null
-
-    const range = selRef.current
-
-    if (range && range.start === range.end) {
-      selRef.current = null
-      setSel(null)
-
-      return
-    }
-
-    const normalized = selRange()
-
-    if (isMac && normalized) {
-      void writeClipboardText(vRef.current.slice(normalized.start, normalized.end))
-    }
-  }
-
-  const offsetAt = (e: { localCol?: number; localRow?: number }) =>
-    offsetFromPosition(display, e.localRow ?? 0, e.localCol ?? 0, columns)
-
-  const isMultiClickAt = (offset: number) => {
-    const now = Date.now()
-    const last = lastClickRef.current
-    lastClickRef.current = { at: now, offset }
-
-    return now - last.at < MULTI_CLICK_MS && offset === last.offset
-  }
-
-  if (mouseApiRef) {
-    mouseApiRef.current = {
-      dragAt: (row, col) => dragMouseSelection(offsetFromPosition(display, row, col, columns)),
-      end: endMouseSelection,
-      startAtBeginning: () => startMouseSelection(0)
-    }
-  }
-
   useInput(
     (inp: string, k: Key, event: InputEvent) => {
       const eventRaw = event.keypress.raw
 
-      // Configured voice shortcut wins over composer-level defaults like
-      // paste/copy so users who bind voice to ctrl+v / alt+v / cmd+v
-      // actually get voice toggled instead of a paste (Copilot round-7
-      // follow-up on #19835). The pass-through predicate is a no-op for
-      // ordinary typing and plain paste when voice is unbound to 'v'.
-      if (shouldPassThroughToGlobalHandler(inp, k, voiceRecordKey)) {
+      if (
+        eventRaw === '\x1bv' ||
+        eventRaw === '\x1bV' ||
+        eventRaw === '\x16' ||
+        (isMac && isActionMod(k) && inp.toLowerCase() === 'v')
+      ) {
+        if (cbPaste.current) {
+          return void emitPaste({ cursor: curRef.current, hotkey: true, text: '', value: vRef.current })
+        }
+
+        if (isMac) {
+          void readClipboardText().then(text => {
+            if (text) {
+              pastePlainText(text)
+            }
+          })
+        }
+
+        return
+      }
+
+      if (isMac && isActionMod(k) && inp.toLowerCase() === 'c') {
+        const range = selRange()
+
+        if (range) {
+          const text = vRef.current.slice(range.start, range.end)
+
+          void writeClipboardText(text)
+        }
+
         return
       }
 
@@ -864,13 +813,9 @@ export function TextInput({
       }
 
       if (k.return) {
-        if (k.shift || k.ctrl || (isMac ? isActionMod(k) : k.meta)) {
-          flushParentChange()
-          commit(ins(vRef.current, curRef.current, '\n'), curRef.current + 1)
-        } else {
-          flushParentChange()
-          cbSubmit.current?.(vRef.current)
-        }
+        k.shift || (isMac ? isActionMod(k) : k.meta)
+          ? commit(ins(vRef.current, curRef.current, '\n'), curRef.current + 1)
+          : cbSubmit.current?.(vRef.current)
 
         return
       }
@@ -882,8 +827,6 @@ export function TextInput({
       const actionHome = k.home || (!isMac && mod && inp === 'a') || isMacActionFallback(k, inp, 'a')
       const actionEnd = k.end || (mod && inp === 'e') || isMacActionFallback(k, inp, 'e')
       const actionDeleteToStart = (mod && inp === 'u') || isMacActionFallback(k, inp, 'u')
-      const actionKillToEnd = (mod && inp === 'k') || isMacActionFallback(k, inp, 'k')
-      const actionDeleteWord = (mod && inp === 'w') || isMacActionFallback(k, inp, 'w')
       const range = selRange()
       const delFwd = k.delete || fwdDel.current
 
@@ -900,20 +843,20 @@ export function TextInput({
       }
 
       if (actionHome) {
+        clearSel()
         c = 0
-        moveCursor(c, k.shift)
-
-        return
       } else if (actionEnd) {
+        clearSel()
         c = v.length
         moveCursor(c, k.shift)
 
         return
       } else if (k.leftArrow) {
-        if (range && !wordMod && !k.shift) {
+        if (range && !wordMod) {
           clearSel()
           c = range.start
         } else {
+          clearSel()
           c = wordMod ? wordLeft(v, c) : prevPos(v, c)
         }
 
@@ -921,16 +864,13 @@ export function TextInput({
 
         return
       } else if (k.rightArrow) {
-        if (range && !wordMod && !k.shift) {
+        if (range && !wordMod) {
           clearSel()
           c = range.end
         } else {
+          clearSel()
           c = wordMod ? wordRight(v, c) : nextPos(v, c)
         }
-
-        moveCursor(c, k.shift)
-
-        return
       } else if (wordMod && inp === 'b') {
         clearSel()
         c = wordLeft(v, c)
@@ -971,7 +911,7 @@ export function TextInput({
         } else {
           v = v.slice(0, c) + v.slice(nextPos(v, c))
         }
-      } else if (actionDeleteWord) {
+      } else if (mod && inp === 'w') {
         if (range) {
           v = v.slice(0, range.start) + v.slice(range.end)
           c = range.start
@@ -991,7 +931,7 @@ export function TextInput({
           v = v.slice(c)
           c = 0
         }
-      } else if (actionKillToEnd) {
+      } else if (mod && inp === 'k') {
         if (range) {
           v = v.slice(0, range.start) + v.slice(range.end)
           c = range.start
@@ -1081,52 +1021,14 @@ export function TextInput({
         setCur(next)
         curRef.current = next
       }}
-      onMouseDown={(e: MouseEventLite) => {
-        if (!focus) {
+      onMouseDown={(e: { button: number }) => {
+        // Right-click to paste: route through the same hotkey path as
+        // Alt+V so the composer's clipboard RPC (text or image) handles it.
+        if (!focus || e.button !== 2) {
           return
         }
 
-        // Right-click → copy active selection if any, otherwise paste.
-        if (e.button === 2) {
-          e.stopImmediatePropagation?.()
-          const decision = decideRightClickAction(vRef.current, selRange())
-          if (decision.action === 'copy') {
-            void writeClipboardText(decision.text)
-
-            return
-          }
-          emitPaste({ cursor: curRef.current, hotkey: true, text: '', value: vRef.current })
-
-          return
-        }
-
-        if (e.button !== 0) {
-          return
-        }
-
-        e.stopImmediatePropagation?.()
-        const offset = offsetAt(e)
-
-        if (isMultiClickAt(offset)) {
-          mouseAnchorRef.current = null
-          selectAll()
-
-          return
-        }
-
-        startMouseSelection(offset)
-      }}
-      onMouseDrag={(e: MouseEventLite) => {
-        if (!focus || e.button !== 0 || mouseAnchorRef.current === null) {
-          return
-        }
-
-        e.stopImmediatePropagation?.()
-        dragMouseSelection(offsetAt(e))
-      }}
-      onMouseUp={(e: MouseEventLite) => {
-        e.stopImmediatePropagation?.()
-        endMouseSelection()
+        emitPaste({ cursor: curRef.current, hotkey: true, text: '', value: vRef.current })
       }}
       ref={boxRef}
       width={columns}

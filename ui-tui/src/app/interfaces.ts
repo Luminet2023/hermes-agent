@@ -4,7 +4,6 @@ import type { MutableRefObject, ReactNode, RefObject, SetStateAction } from 'rea
 import type { PasteEvent } from '../components/textInput.js'
 import type { GatewayClient } from '../gatewayClient.js'
 import type { ImageAttachResponse } from '../gatewayTypes.js'
-import type { ParsedVoiceRecordKey } from '../lib/platform.js'
 import type { RpcResult } from '../lib/rpc.js'
 import type { Theme } from '../theme.js'
 import type {
@@ -138,7 +137,7 @@ export interface ComposerActions {
   dequeue: () => string | undefined
   enqueue: (text: string) => void
   handleTextPaste: (event: PasteEvent) => MaybePromise<ComposerPasteResult | null>
-  openEditor: () => Promise<void>
+  openEditor: () => void
   pushHistory: (text: string) => void
   removeQueue: (index: number) => void
   replaceQueue: (index: number, text: string) => void
@@ -225,9 +224,6 @@ export interface InputHandlerResult {
 }
 
 export interface GatewayEventHandlerContext {
-  composer: {
-    setInput: StateSetter<string>
-  }
   gateway: GatewayServices
   session: {
     STARTUP_RESUME_ID: string

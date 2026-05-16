@@ -10,16 +10,8 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import type {
-  AnalyticsResponse,
-  AnalyticsDailyEntry,
-  AnalyticsModelEntry,
-  AnalyticsSkillEntry,
-} from "@/lib/api";
+import type { AnalyticsResponse, AnalyticsDailyEntry, AnalyticsModelEntry, AnalyticsSkillEntry } from "@/lib/api";
 import { timeAgo } from "@/lib/utils";
-import { Button } from "@nous-research/ui/ui/components/button";
-import { Spinner } from "@nous-research/ui/ui/components/spinner";
-import { Stats } from "@nous-research/ui/ui/components/stats";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@nous-research/ui/ui/components/badge";
 import { usePageHeader } from "@/contexts/usePageHeader";
@@ -392,6 +384,52 @@ function SkillTable({ skills }: { skills: AnalyticsSkillEntry[] }) {
   );
 }
 
+function SkillTable({ skills }: { skills: AnalyticsSkillEntry[] }) {
+  const { t } = useI18n();
+  if (skills.length === 0) return null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <Brain className="h-5 w-5 text-muted-foreground" />
+          <CardTitle className="text-base">{t.analytics.topSkills}</CardTitle>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border text-muted-foreground text-xs">
+                <th className="text-left py-2 pr-4 font-medium">{t.analytics.skill}</th>
+                <th className="text-right py-2 px-4 font-medium">{t.analytics.loads}</th>
+                <th className="text-right py-2 px-4 font-medium">{t.analytics.edits}</th>
+                <th className="text-right py-2 px-4 font-medium">{t.analytics.total}</th>
+                <th className="text-right py-2 pl-4 font-medium">{t.analytics.lastUsed}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {skills.map((skill) => (
+                <tr key={skill.skill} className="border-b border-border/50 hover:bg-secondary/20 transition-colors">
+                  <td className="py-2 pr-4">
+                    <span className="font-mono-ui text-xs">{skill.skill}</span>
+                  </td>
+                  <td className="text-right py-2 px-4 text-muted-foreground">{skill.view_count}</td>
+                  <td className="text-right py-2 px-4 text-muted-foreground">{skill.manage_count}</td>
+                  <td className="text-right py-2 px-4">{skill.total_count}</td>
+                  <td className="text-right py-2 pl-4 text-muted-foreground">
+                    {skill.last_used_at ? timeAgo(skill.last_used_at) : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function AnalyticsPage() {
   const [days, setDays] = useState(30);
   const [data, setData] = useState<AnalyticsResponse | null>(null);
@@ -577,23 +615,17 @@ export default function AnalyticsPage() {
         </>
       )}
 
-      {data &&
-        data.daily.length === 0 &&
-        data.by_model.length === 0 &&
-        data.skills.top_skills.length === 0 && (
-          <Card>
-            <CardContent className="py-12">
-              <div className="flex flex-col items-center text-muted-foreground">
-                <BarChart3 className="h-8 w-8 mb-3 opacity-40" />
-                <p className="text-sm font-medium">{t.analytics.noUsageData}</p>
-                <p className="text-xs mt-1 text-muted-foreground/60">
-                  {t.analytics.startSession}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-      <PluginSlot name="analytics:bottom" />
+      {data && data.daily.length === 0 && data.by_model.length === 0 && data.skills.top_skills.length === 0 && (
+        <Card>
+          <CardContent className="py-12">
+            <div className="flex flex-col items-center text-muted-foreground">
+              <BarChart3 className="h-8 w-8 mb-3 opacity-40" />
+              <p className="text-sm font-medium">{t.analytics.noUsageData}</p>
+              <p className="text-xs mt-1 text-muted-foreground/60">{t.analytics.startSession}</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

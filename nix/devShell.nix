@@ -7,9 +7,11 @@
   perSystem =
     { pkgs, self', ... }:
     let
-      packages = builtins.attrValues self'.packages;
-    in
-    {
+      hermes-agent = inputs.self.packages.${system}.default;
+      hermes-tui = inputs.self.packages.${system}.tui;
+      hermes-web = inputs.self.packages.${system}.web;
+      packages = [ hermes-agent hermes-tui hermes-web ];
+    in {
       devShells.default = pkgs.mkShell {
         inputsFrom = packages;
         packages = with pkgs; [

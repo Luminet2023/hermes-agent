@@ -110,7 +110,7 @@ class TestWebServerEndpoints:
 
         import hermes_state
         from hermes_constants import get_hermes_home
-        from hermes_cli.web_server import app, _SESSION_HEADER_NAME, _SESSION_TOKEN
+        from hermes_cli.web_server import app, _SESSION_TOKEN
 
         monkeypatch.setattr(hermes_state, "DEFAULT_DB_PATH", get_hermes_home() / "state.db")
 
@@ -563,7 +563,7 @@ class TestNewEndpoints:
 
         import hermes_state
         from hermes_constants import get_hermes_home
-        from hermes_cli.web_server import app, _SESSION_HEADER_NAME, _SESSION_TOKEN
+        from hermes_cli.web_server import app, _SESSION_TOKEN
 
         monkeypatch.setattr(hermes_state, "DEFAULT_DB_PATH", get_hermes_home() / "state.db")
 
@@ -961,7 +961,6 @@ class TestNewEndpoints:
         assert "skills" in data
         assert isinstance(data["daily"], list)
         assert "total_sessions" in data["totals"]
-        assert "total_api_calls" in data["totals"]
         assert data["skills"] == {
             "summary": {
                 "total_skill_loads": 0,

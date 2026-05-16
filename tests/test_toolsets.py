@@ -215,8 +215,8 @@ class TestToolsetConsistency:
     def test_hermes_platforms_share_core_tools(self):
         """All hermes-* platform toolsets share the same core tools.
 
-        Platform-specific additions (e.g. ``discord`` / ``discord_admin``
-        on hermes-discord, gated on DISCORD_BOT_TOKEN) are allowed on top —
+        Platform-specific additions (e.g. ``discord_server`` on
+        hermes-discord, gated on DISCORD_BOT_TOKEN) are allowed on top —
         the invariant is that the core set is identical across platforms.
         """
         platforms = ["hermes-cli", "hermes-telegram", "hermes-discord", "hermes-whatsapp", "hermes-slack", "hermes-signal", "hermes-homeassistant"]
@@ -229,6 +229,15 @@ class TestToolsetConsistency:
         # Sanity: the shared core must be non-trivial (i.e. we didn't
         # silently let a platform diverge so far that nothing is shared).
         assert len(core) > 20, f"Suspiciously small shared core: {len(core)} tools"
+
+    def test_cli_toolset_adds_local_only_privileged_tools(self):
+        cli_tools = set(resolve_toolset("hermes-cli"))
+        telegram_tools = set(resolve_toolset("hermes-telegram"))
+
+        assert "request_privileged_host_action" in cli_tools
+        assert "request_host_mount" in cli_tools
+        assert "request_privileged_host_action" not in telegram_tools
+        assert "request_host_mount" not in telegram_tools
 
 
 class TestPluginToolsets:

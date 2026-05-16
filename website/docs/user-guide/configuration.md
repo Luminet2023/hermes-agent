@@ -706,8 +706,6 @@ Budget pressure is enabled by default. The agent sees warnings naturally as part
 
 When the iteration budget is fully exhausted, the CLI shows a notification to the user: `⚠ Iteration budget reached (90/90) — response may be incomplete`. If the budget runs out during active work, the agent generates a summary of what was accomplished before stopping.
 
-`agent.api_max_retries` controls how many times Hermes retries a provider API call on transient errors (rate limits, connection drops, 5xx) **before** fallback-provider switching engages. The default is `3` — four attempts total. If you have [fallback providers](/docs/user-guide/features/fallback-providers) configured and want to fail over faster, drop this to `0` so the first transient error on your primary immediately hands off to the fallback instead of churning retries against the flaky endpoint.
-
 ### API Timeouts
 
 Hermes has separate timeout layers for streaming, plus a stale detector for non-streaming calls. The stale detectors auto-adjust for local providers only when you leave them at their implicit defaults.
@@ -934,28 +932,6 @@ Use `extra_body` only when your provider documents OpenAI-compatible request-bod
 :::warning
 `extra_body` is only effective when your provider actually supports the field you send. If the provider does not expose a native OpenAI-compatible reasoning-off flag, Hermes cannot synthesize one on its behalf.
 :::
-
-### OpenRouter routing & Pareto Code for auxiliary tasks
-
-When an auxiliary task resolves to OpenRouter (either explicitly or via `provider: "main"` while your main agent is on OpenRouter), the main agent's `provider_routing` and `openrouter.min_coding_score` settings **do not propagate** — by design, each auxiliary task is independent. To set OpenRouter provider preferences or use the [Pareto Code router](/docs/integrations/providers#openrouter-pareto-code-router) for a specific aux task, set them per-task via `extra_body`:
-
-```yaml
-auxiliary:
-  compression:
-    provider: openrouter
-    model: openrouter/pareto-code         # use the Pareto Code router for this task
-    extra_body:
-      provider:                            # OpenRouter provider routing prefs
-        order: [anthropic, google]         # try these providers in order
-        sort: throughput                   # or "price" | "latency"
-        # only: [anthropic]                # restrict to a specific provider
-        # ignore: [deepinfra]              # exclude specific providers
-      plugins:                             # OpenRouter Pareto Code router knob
-        - id: pareto-router
-          min_coding_score: 0.5            # 0.0–1.0; higher = stronger coders
-```
-
-The shape mirrors what OpenRouter accepts in the chat completions request body. Hermes forwards the entire `extra_body` verbatim, so any other OpenRouter request-body field documented at [openrouter.ai/docs](https://openrouter.ai/docs) works the same way.
 
 ### Changing the Vision Model
 

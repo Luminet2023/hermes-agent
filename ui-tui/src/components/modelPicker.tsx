@@ -36,6 +36,13 @@ export function ModelPicker({ gw, onCancel, onSelect, sessionId, t }: ModelPicke
   // has an actual constraint to truncate against.
   const width = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, (stdout?.columns ?? 80) - 6))
 
+  const { stdout } = useStdout()
+  // Pin the picker to a stable width so the FloatBox parent (which shrinks-
+  // to-fit with alignSelf="flex-start") doesn't resize as long provider /
+  // model names scroll into view, and so `wrap="truncate-end"` on each row
+  // has an actual constraint to truncate against.
+  const width = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, (stdout?.columns ?? 80) - 6))
+
   useEffect(() => {
     gw.request<ModelOptionsResponse>('model.options', sessionId ? { session_id: sessionId } : {})
       .then(raw => {
@@ -294,118 +301,28 @@ export function ModelPicker({ gw, onCancel, onSelect, sessionId, t }: ModelPicke
 
     return (
       <Box flexDirection="column" width={width}>
-        <Text bold color={t.color.accent} wrap="truncate-end">
-          Configure {provider.name}
+        <Text bold color={t.color.amber} wrap="truncate-end">
+          Select Provider
         </Text>
 
-        <Text color={t.color.muted} wrap="truncate-end">
-          Paste your API key below (saved to ~/.hermes/.env)
-        </Text>
-
-        <Text color={t.color.muted} wrap="truncate-end"> </Text>
-
-        <Text color={t.color.muted} wrap="truncate-end">
-          {provider.key_env}:
-        </Text>
-
-        <Text color={t.color.accent} wrap="truncate-end">
-          {'  '}{masked || '(empty)'}{keySaving ? '' : '▎'}
-        </Text>
-
-        <Text color={t.color.muted} wrap="truncate-end"> </Text>
-
-        {keyError ? (
-          <Text color={t.color.label} wrap="truncate-end">
-            error: {keyError}
-          </Text>
-        ) : keySaving ? (
-          <Text color={t.color.muted} wrap="truncate-end">
-            saving…
-          </Text>
-        ) : (
-          <Text color={t.color.muted} wrap="truncate-end"> </Text>
-        )}
-
-        <OverlayHint t={t}>Enter save · Ctrl+U clear · Esc back</OverlayHint>
-      </Box>
-    )
-  }
-
-  // ── Disconnect confirmation stage ─────────────────────────────────────
-  if (stage === 'disconnect' && provider) {
-    return (
-      <Box flexDirection="column" width={width}>
-        <Text bold color={t.color.accent} wrap="truncate-end">
-          Disconnect {provider.name}?
-        </Text>
-
-        <Text color={t.color.muted} wrap="truncate-end"> </Text>
-
-        <Text color={t.color.muted} wrap="truncate-end">
-          This removes saved credentials for {provider.name}.
-        </Text>
-
-        <Text color={t.color.muted} wrap="truncate-end">
-          You can re-authenticate later by selecting it again.
-        </Text>
-
-        <Text color={t.color.muted} wrap="truncate-end"> </Text>
-
-        {keySaving ? (
-          <Text color={t.color.muted} wrap="truncate-end">disconnecting…</Text>
-        ) : (
-          <OverlayHint t={t}>y/Enter confirm · n/Esc cancel</OverlayHint>
-        )}
-      </Box>
-    )
-  }
-
-  // ── Provider selection stage ─────────────────────────────────────────
-  if (stage === 'provider') {
-    const rows = providers.map(
-      (p, i) => {
-        const authMark = p.authenticated === false ? '○' : p.is_current ? '*' : '●'
-        const modelCount = p.total_models ?? p.models?.length ?? 0
-        const suffix = p.authenticated === false
-          ? (p.auth_type === 'api_key' ? '(no key)' : '(needs setup)')
-          : `${modelCount} models`
-
-        return `${authMark} ${names[i]} · ${suffix}`
-      }
-    )
-
-    const { items, offset } = windowItems(rows, providerIdx, VISIBLE)
-
-    return (
-      <Box flexDirection="column" width={width}>
-        <Text bold color={t.color.accent} wrap="truncate-end">
-          Select provider (step 1/2)
-        </Text>
-
-        <Text color={t.color.muted} wrap="truncate-end">
-          Full model IDs on the next step · Enter to continue
-        </Text>
-
-        <Text color={t.color.muted} wrap="truncate-end">
-          Current: {currentModel || '(unknown)'}
+        <Text color={t.color.dim} wrap="truncate-end">
+          Current model: {currentModel || '(unknown)'}
         </Text>
         <Text color={t.color.label} wrap="truncate-end">
           {provider?.warning ? `warning: ${provider.warning}` : ' '}
         </Text>
-        <Text color={t.color.muted} wrap="truncate-end">
-          {offset > 0 ? ` ↑ ${offset} more` : ' '}
+        <Text color={t.color.dim} wrap="truncate-end">
+          {off > 0 ? ` ↑ ${off} more` : ' '}
         </Text>
 
         {Array.from({ length: VISIBLE }, (_, i) => {
           const row = items[i]
-          const idx = offset + i
-          const p = providers[idx]
-          const dimmed = p?.authenticated === false
+          const idx = off + i
 
           return row ? (
             <Text
               bold={providerIdx === idx}
-              color={providerIdx === idx ? t.color.accent : dimmed ? t.color.label : t.color.muted}
+              color={providerIdx === idx ? t.color.amber : t.color.dim}
               inverse={providerIdx === idx}
               key={providers[idx]?.slug ?? `row-${idx}`}
               wrap="truncate-end"
@@ -417,17 +334,23 @@ export function ModelPicker({ gw, onCancel, onSelect, sessionId, t }: ModelPicke
             <Text color={t.color.muted} key={`pad-${i}`} wrap="truncate-end">
               {' '}
             </Text>
+          ) : (
+            <Text color={t.color.dim} key={`pad-${i}`} wrap="truncate-end">
+              {' '}
+            </Text>
           )
         })}
 
-        <Text color={t.color.muted} wrap="truncate-end">
-          {offset + VISIBLE < rows.length ? ` ↓ ${rows.length - offset - VISIBLE} more` : ' '}
+        <Text color={t.color.dim} wrap="truncate-end">
+          {off + VISIBLE < rows.length ? ` ↓ ${rows.length - off - VISIBLE} more` : ' '}
         </Text>
 
-        <Text color={t.color.muted} wrap="truncate-end">
+        <Text color={t.color.dim} wrap="truncate-end">
           persist: {persistGlobal ? 'global' : 'session'} · g toggle
         </Text>
-        <OverlayHint t={t}>↑/↓ select · Enter choose · d disconnect · Esc/q cancel</OverlayHint>
+        <Text color={t.color.dim} wrap="truncate-end">
+          ↑/↓ select · Enter choose · 1-9,0 quick · Esc cancel
+        </Text>
       </Box>
     )
   }
@@ -437,54 +360,59 @@ export function ModelPicker({ gw, onCancel, onSelect, sessionId, t }: ModelPicke
 
   return (
     <Box flexDirection="column" width={width}>
-      <Text bold color={t.color.accent} wrap="truncate-end">
-        Select model (step 2/2)
+      <Text bold color={t.color.amber} wrap="truncate-end">
+        Select Model
       </Text>
 
-      <Text color={t.color.muted} wrap="truncate-end">
-        {names[providerIdx] || '(unknown provider)'} · Esc back
+      <Text color={t.color.dim} wrap="truncate-end">
+        {names[providerIdx] || '(unknown provider)'}
       </Text>
       <Text color={t.color.label} wrap="truncate-end">
         {provider?.warning ? `warning: ${provider.warning}` : ' '}
       </Text>
-      <Text color={t.color.muted} wrap="truncate-end">
-        {offset > 0 ? ` ↑ ${offset} more` : ' '}
+      <Text color={t.color.dim} wrap="truncate-end">
+        {off > 0 ? ` ↑ ${off} more` : ' '}
       </Text>
 
       {Array.from({ length: VISIBLE }, (_, i) => {
         const row = items[i]
-        const idx = offset + i
+        const idx = off + i
 
         if (!row) {
           return !models.length && i === 0 ? (
-            <Text color={t.color.muted} key="empty" wrap="truncate-end">
+            <Text color={t.color.dim} key="empty" wrap="truncate-end">
               no models listed for this provider
             </Text>
           ) : (
-            <Text color={t.color.muted} key={`pad-${i}`} wrap="truncate-end">
+            <Text color={t.color.dim} key={`pad-${i}`} wrap="truncate-end">
               {' '}
             </Text>
           )
         }
 
-        const prefix = modelIdx === idx ? '▸ ' : row === currentModel ? '* ' : '  '
-
         return (
           <Text
             bold={modelIdx === idx}
-            color={modelIdx === idx ? t.color.accent : t.color.muted}
+            color={modelIdx === idx ? t.color.amber : t.color.dim}
             inverse={modelIdx === idx}
             key={`${provider?.slug ?? 'prov'}:${idx}:${row}`}
             wrap="truncate-end"
           >
-            {prefix}
-            {idx + 1}. {row}
+            {modelIdx === idx ? '▸ ' : '  '}
+            {i + 1}. {row}
           </Text>
         )
       })}
 
-      <Text color={t.color.muted} wrap="truncate-end">
-        {offset + VISIBLE < models.length ? ` ↓ ${models.length - offset - VISIBLE} more` : ' '}
+      <Text color={t.color.dim} wrap="truncate-end">
+        {off + VISIBLE < models.length ? ` ↓ ${models.length - off - VISIBLE} more` : ' '}
+      </Text>
+
+      <Text color={t.color.dim} wrap="truncate-end">
+        persist: {persistGlobal ? 'global' : 'session'} · g toggle
+      </Text>
+      <Text color={t.color.dim} wrap="truncate-end">
+        {models.length ? '↑/↓ select · Enter switch · 1-9,0 quick · Esc back' : 'Enter/Esc back'}
       </Text>
 
       <Text color={t.color.muted} wrap="truncate-end">

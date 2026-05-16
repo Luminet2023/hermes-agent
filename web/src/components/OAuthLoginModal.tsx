@@ -1,9 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { ExternalLink, X, Check } from "lucide-react";
-import { Button } from "@nous-research/ui/ui/components/button";
-import { CopyButton } from "@nous-research/ui/ui/components/command-block";
-import { Spinner } from "@nous-research/ui/ui/components/spinner";
-import { H2 } from "@/components/NouiTypography";
+import { ExternalLink, Copy, X, Check, Loader2 } from "lucide-react";
+import { H2 } from "@nous-research/ui";
 import { api, type OAuthProvider, type OAuthStartResponse } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { useI18n } from "@/i18n";
@@ -24,7 +21,12 @@ type Phase =
   | "approved"
   | "error";
 
-export function OAuthLoginModal({ provider, onClose, onSuccess }: Props) {
+export function OAuthLoginModal({
+  provider,
+  onClose,
+  onSuccess,
+  onError,
+}: Props) {
   const [phase, setPhase] = useState<Phase>("starting");
   const [start, setStart] = useState<OAuthStartResponse | null>(null);
   const [pkceCode, setPkceCode] = useState("");
@@ -239,6 +241,7 @@ export function OAuthLoginModal({ provider, onClose, onSuccess }: Props) {
                   <Button
                     onClick={handleSubmitPkceCode}
                     disabled={!pkceCode.trim()}
+                    size="sm"
                   >
                     {t.oauth.submitCode}
                   </Button>
@@ -270,16 +273,27 @@ export function OAuthLoginModal({ provider, onClose, onSuccess }: Props) {
                     ).user_code
                   }
                 </code>
-                <CopyButton
-                  text={
-                    (
-                      start as Extract<
-                        OAuthStartResponse,
-                        { flow: "device_code" }
-                      >
-                    ).user_code
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    handleCopyUserCode(
+                      (
+                        start as Extract<
+                          OAuthStartResponse,
+                          { flow: "device_code" }
+                        >
+                      ).user_code,
+                    )
                   }
-                />
+                  className="text-xs"
+                >
+                  {codeCopied ? (
+                    <Check className="h-3 w-3" />
+                  ) : (
+                    <Copy className="h-3 w-3" />
+                  )}
+                </Button>
               </div>
               <a
                 href={

@@ -24,12 +24,12 @@ import {
   X,
   Play,
 } from "lucide-react";
+import { H2 } from "@nous-research/ui";
 import { api } from "@/lib/api";
 import type {
   SessionInfo,
   SessionMessage,
   SessionSearchResult,
-  StatusResponse,
 } from "@/lib/api";
 import { timeAgo } from "@/lib/utils";
 import { Markdown } from "@/components/Markdown";
@@ -191,7 +191,7 @@ function MessageBubble({
       <div className="flex items-center gap-2 mb-1">
         <span className={`text-xs font-semibold ${style.text}`}>{label}</span>
         {isHit && (
-          <Badge tone="warning" className="text-[9px] py-0 px-1.5">
+          <Badge variant="warning" className="text-[9px] py-0 px-1.5">
             {t.common.match}
           </Badge>
         )}
@@ -625,41 +625,14 @@ export default function SessionsPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <PluginSlot name="sessions:top" />
-      <Toast toast={toast} />
-
-      <DeleteConfirmDialog
-        open={sessionDelete.isOpen}
-        onCancel={sessionDelete.cancel}
-        onConfirm={sessionDelete.confirm}
-        title={t.sessions.confirmDeleteTitle}
-        description={
-          pendingSession?.title && pendingSession.title !== "Untitled"
-            ? `"${pendingSession.title}" — ${t.sessions.confirmDeleteMessage}`
-            : t.sessions.confirmDeleteMessage
-        }
-        loading={sessionDelete.isDeleting}
-      />
-
-      {alerts.length > 0 && (
-        <div className="border border-destructive/30 bg-destructive/[0.06] p-4">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
-            <div className="flex flex-col gap-2 min-w-0">
-              {alerts.map((alert, i) => (
-                <div key={i}>
-                  <p className="text-sm font-medium text-destructive">
-                    {alert.message}
-                  </p>
-                  {alert.detail && (
-                    <p className="text-xs text-destructive/70 mt-0.5">
-                      {alert.detail}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
+      {/* Header outside card for lighter feel */}
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:justify-between">
+        <div className="flex items-center gap-2">
+          <MessageSquare className="h-5 w-5 text-muted-foreground" />
+          <H2 variant="sm">{t.sessions.title}</H2>
+          <Badge variant="secondary" className="text-xs">
+            {total}
+          </Badge>
         </div>
       )}
 

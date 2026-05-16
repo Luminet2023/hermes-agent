@@ -101,7 +101,7 @@ export function ApprovalPrompt({ onChoice, req, t }: ApprovalPromptProps) {
 
       {OPTS.map((o, i) => (
         <Text key={o}>
-          <Text bold={sel === i} color={sel === i ? t.color.warn : t.color.muted} inverse={sel === i}>
+          <Text bold={sel === i} color={sel === i ? t.color.warn : t.color.dim} inverse={sel === i}>
             {sel === i ? '▸ ' : '  '}
             {i + 1}. {LABELS[o]}
           </Text>
@@ -166,7 +166,7 @@ export function ClarifyPrompt({ cols = 80, onAnswer, onCancel, req, t }: Clarify
           <TextInput columns={Math.max(20, cols - 6)} onChange={setCustom} onSubmit={onAnswer} value={custom} />
         </Box>
 
-        <Text color={t.color.muted}>
+        <Text color={t.color.dim}>
           Enter send · Esc {choices.length ? 'back' : 'cancel'} ·{' '}
           {isMac ? 'Cmd+C copy · Cmd+V paste · Ctrl+C cancel' : 'Ctrl+C cancel'}
         </Text>
@@ -180,7 +180,7 @@ export function ClarifyPrompt({ cols = 80, onAnswer, onCancel, req, t }: Clarify
 
       {[...choices, 'Other (type your answer)'].map((c, i) => (
         <Text key={i}>
-          <Text bold={sel === i} color={sel === i ? t.color.label : t.color.muted} inverse={sel === i}>
+          <Text bold={sel === i} color={sel === i ? t.color.label : t.color.dim} inverse={sel === i}>
             {sel === i ? '▸ ' : '  '}
             {i + 1}. {c}
           </Text>
@@ -222,8 +222,8 @@ export function ConfirmPrompt({ onCancel, onConfirm, req, t }: ConfirmPromptProp
   const accent = req.danger ? t.color.error : t.color.warn
 
   const rows = [
-    { color: t.color.text, label: req.cancelLabel ?? 'No' },
-    { color: req.danger ? t.color.error : t.color.text, label: req.confirmLabel ?? 'Yes' }
+    { color: t.color.cornsilk, label: req.cancelLabel ?? 'No' },
+    { color: req.danger ? t.color.error : t.color.cornsilk, label: req.confirmLabel ?? 'Yes' }
   ]
 
   return (

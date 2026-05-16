@@ -95,6 +95,7 @@ class HonchoSessionManager:
         self._config = config
         self._runtime_user_peer_name = runtime_user_peer_name
         self._cache: dict[str, HonchoSession] = {}
+        self._cache_lock = threading.RLock()
         self._peers_cache: dict[str, Any] = {}
         self._sessions_cache: dict[str, Any] = {}
 
@@ -159,11 +160,13 @@ class HonchoSessionManager:
         Peers are lazy -- no API call until first use.
         Observation settings are controlled per-session via SessionPeerConfig.
         """
-        if peer_id in self._peers_cache:
-            return self._peers_cache[peer_id]
+        with self._cache_lock:
+            if peer_id in self._peers_cache:
+                return self._peers_cache[peer_id]
 
         peer = self.honcho.peer(peer_id)
-        self._peers_cache[peer_id] = peer
+        with self._cache_lock:
+            self._peers_cache[peer_id] = peer
         return peer
 
     def _get_or_create_honcho_session(
@@ -175,9 +178,10 @@ class HonchoSessionManager:
         Returns:
             Tuple of (honcho_session, existing_messages).
         """
-        if session_id in self._sessions_cache:
-            logger.debug("Honcho session '%s' retrieved from cache", session_id)
-            return self._sessions_cache[session_id], []
+        with self._cache_lock:
+            if session_id in self._sessions_cache:
+                logger.debug("Honcho session '%s' retrieved from cache", session_id)
+                return self._sessions_cache[session_id], []
 
         session = self.honcho.session(session_id)
 
@@ -273,9 +277,10 @@ class HonchoSessionManager:
         Returns:
             The session.
         """
-        if key in self._cache:
-            logger.debug("Local session cache hit: %s", key)
-            return self._cache[key]
+        with self._cache_lock:
+            if key in self._cache:
+                logger.debug("Local session cache hit: %s", key)
+                return self._cache[key]
 
         # Gateway sessions should use the runtime user identity when available.
         if self._runtime_user_peer_name:
@@ -283,7 +288,6 @@ class HonchoSessionManager:
         elif self._config and self._config.peer_name:
             user_peer_id = self._sanitize_id(self._config.peer_name)
         else:
-            # Fallback: derive from session key
             parts = key.split(":", 1)
             channel = parts[0] if len(parts) > 1 else "default"
             chat_id = parts[1] if len(parts) > 1 else key
@@ -293,19 +297,14 @@ class HonchoSessionManager:
             self._config.ai_peer if self._config else "hermes-assistant"
         )
 
-        # Sanitize session ID for Honcho
+        # All expensive I/O outside the lock — Honcho's persistence is source of truth
         honcho_session_id = self._sanitize_id(key)
-
-        # Get or create peers
         user_peer = self._get_or_create_peer(user_peer_id)
         assistant_peer = self._get_or_create_peer(assistant_peer_id)
-
-        # Get or create Honcho session
         honcho_session, existing_messages = self._get_or_create_honcho_session(
             honcho_session_id, user_peer, assistant_peer
         )
 
-        # Convert Honcho messages to local format
         local_messages = []
         for msg in existing_messages:
             role = "assistant" if msg.peer_id == assistant_peer_id else "user"
@@ -313,10 +312,9 @@ class HonchoSessionManager:
                 "role": role,
                 "content": msg.content,
                 "timestamp": msg.created_at.isoformat() if msg.created_at else "",
-                "_synced": True,  # Already in Honcho
+                "_synced": True,
             })
 
-        # Create local session wrapper with existing messages
         session = HonchoSession(
             key=key,
             user_peer_id=user_peer_id,
@@ -325,7 +323,9 @@ class HonchoSessionManager:
             messages=local_messages,
         )
 
-        self._cache[key] = session
+        # Write to cache under lock — only one writer wins
+        with self._cache_lock:
+            self._cache[key] = session
         return session
 
     def _flush_session(self, session: HonchoSession) -> bool:
@@ -356,13 +356,15 @@ class HonchoSessionManager:
             for msg in new_messages:
                 msg["_synced"] = True
             logger.debug("Synced %d messages to Honcho for %s", len(honcho_messages), session.key)
-            self._cache[session.key] = session
+            with self._cache_lock:
+                self._cache[session.key] = session
             return True
         except Exception as e:
             for msg in new_messages:
                 msg["_synced"] = False
             logger.error("Failed to sync messages to Honcho: %s", e)
-            self._cache[session.key] = session
+            with self._cache_lock:
+                self._cache[session.key] = session
             return False
 
     def _async_writer_loop(self) -> None:
@@ -434,7 +436,9 @@ class HonchoSessionManager:
         Called at session end for "session" write_frequency, or to force
         a sync before process exit regardless of mode.
         """
-        for session in list(self._cache.values()):
+        with self._cache_lock:
+            sessions = list(self._cache.values())
+        for session in sessions:
             try:
                 self._flush_session(session)
             except Exception as e:
@@ -459,9 +463,10 @@ class HonchoSessionManager:
 
     def delete(self, key: str) -> bool:
         """Delete a session from local cache."""
-        if key in self._cache:
-            del self._cache[key]
-            return True
+        with self._cache_lock:
+            if key in self._cache:
+                del self._cache[key]
+                return True
         return False
 
     def new_session(self, key: str) -> HonchoSession:
@@ -473,20 +478,25 @@ class HonchoSessionManager:
         """
         import time
 
-        # Remove old session from caches (but don't delete from Honcho)
-        old_session = self._cache.pop(key, None)
-        if old_session:
-            self._sessions_cache.pop(old_session.honcho_session_id, None)
+        # Hold the reentrant lock across get_or_create so a concurrent caller
+        # can't observe the (old-popped, new-not-yet-inserted) gap and create
+        # its own session under the raw key.  `_cache_lock` is an RLock so
+        # nested reacquisition inside get_or_create is safe.
+        with self._cache_lock:
+            # Remove old session from caches (but don't delete from Honcho)
+            old_session = self._cache.pop(key, None)
+            if old_session:
+                self._sessions_cache.pop(old_session.honcho_session_id, None)
 
-        # Create new session with timestamp suffix
-        timestamp = int(time.time())
-        new_key = f"{key}:{timestamp}"
+            # Create new session with timestamp suffix
+            timestamp = int(time.time())
+            new_key = f"{key}:{timestamp}"
 
-        # get_or_create will create a fresh session
-        session = self.get_or_create(new_key)
+            # get_or_create will create a fresh session
+            session = self.get_or_create(new_key)
 
-        # Cache under the original key so callers find it by the expected name
-        self._cache[key] = session
+            # Cache under the original key so callers find it by the expected name
+            self._cache[key] = session
 
         logger.info("Created new session for %s (honcho: %s)", key, session.honcho_session_id)
         return session
@@ -598,14 +608,15 @@ class HonchoSessionManager:
         Pre-fetch user and AI peer context from Honcho.
 
         Fetches peer_representation and peer_card for both peers, plus the
-        session summary when available. search_query is intentionally omitted
-        — it would only affect additional excerpts that this code does not
-        consume, and passing the raw message exposes conversation content in
-        server access logs.
+        session summary when available. When user_message is provided, it is
+        passed as search_query to the peer context call so Honcho returns
+        conclusions relevant to the session topic rather than the full
+        observation dump.
 
         Args:
             session_key: The session key to get context for.
-            user_message: Unused; kept for call-site compatibility.
+            user_message: Optional first user message used as search_query for
+                          topic-relevant context retrieval.
 
         Returns:
             Dictionary with 'representation', 'card', 'ai_representation',
@@ -631,7 +642,7 @@ class HonchoSessionManager:
             logger.debug("Failed to fetch session summary from Honcho: %s", e)
 
         try:
-            user_ctx = self._fetch_peer_context(session.user_peer_id, target=session.user_peer_id)
+            user_ctx = self._fetch_peer_context(session.user_peer_id, search_query=user_message or None, target=session.user_peer_id)
             result["representation"] = user_ctx["representation"]
             result["card"] = "\n".join(user_ctx["card"])
         except Exception as e:

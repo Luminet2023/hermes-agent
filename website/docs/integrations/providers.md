@@ -1440,8 +1440,10 @@ The legacy single-pair `fallback_model:` dict is still accepted for back-compat:
 
 ```yaml
 fallback_model:
-  provider: openrouter
-  model: anthropic/claude-sonnet-4
+  provider: openrouter                    # required
+  model: anthropic/claude-sonnet-4        # required
+  # base_url: http://localhost:8000/v1    # optional, for custom endpoints
+  # key_env: MY_CUSTOM_KEY               # optional, env var name for custom endpoint API key
 ```
 
 When activated, the fallback swaps the model and provider mid-session without losing your conversation. The chain is tried entry-by-entry; activation is one-shot per session.

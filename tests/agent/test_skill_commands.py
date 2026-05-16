@@ -644,6 +644,77 @@ class TestTemplateVarSubstitution:
             )
 
         assert msg is not None
+        assert "Save plans under $HERMES_HOME/plans" not in msg
+        assert ".hermes/plans" in msg
+        assert "Add a /plan command" in msg
+        assert ".hermes/plans/plan.md" in msg
+        assert "Runtime note:" in msg
+
+
+class TestSkillDirectoryHeader:
+    """The activation message must expose the absolute skill directory and
+    explain how to resolve relative paths, so skills with bundled scripts
+    don't force the agent into a second ``skill_view()`` round-trip."""
+
+    def test_header_contains_absolute_skill_dir(self, tmp_path):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            skill_dir = _make_skill(tmp_path, "abs-dir-skill")
+            scan_skill_commands()
+            msg = build_skill_invocation_message("/abs-dir-skill", "go")
+
+        assert msg is not None
+        assert f"[Skill directory: {skill_dir}]" in msg
+        assert "Resolve any relative paths" in msg
+
+    def test_supporting_files_shown_with_absolute_paths(self, tmp_path):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            skill_dir = _make_skill(tmp_path, "scripted-skill")
+            (skill_dir / "scripts").mkdir()
+            (skill_dir / "scripts" / "run.js").write_text("console.log('hi')")
+            scan_skill_commands()
+            msg = build_skill_invocation_message("/scripted-skill")
+
+        assert msg is not None
+        # The supporting-files block must emit both the relative form (so the
+        # agent can call skill_view on it) and the absolute form (so it can
+        # run the script directly via terminal).
+        assert "scripts/run.js" in msg
+        assert str(skill_dir / "scripts" / "run.js") in msg
+        assert f"node {skill_dir}/scripts/foo.js" in msg
+
+
+class TestTemplateVarSubstitution:
+    """``${HERMES_SKILL_DIR}`` and ``${HERMES_SESSION_ID}`` in SKILL.md body
+    are replaced before the agent sees the content."""
+
+    def test_substitutes_skill_dir(self, tmp_path):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            skill_dir = _make_skill(
+                tmp_path,
+                "templated",
+                body="Run: node ${HERMES_SKILL_DIR}/scripts/foo.js",
+            )
+            scan_skill_commands()
+            msg = build_skill_invocation_message("/templated")
+
+        assert msg is not None
+        assert f"node {skill_dir}/scripts/foo.js" in msg
+        # The literal template token must not leak through.
+        assert "${HERMES_SKILL_DIR}" not in msg.split("[Skill directory:")[0]
+
+    def test_substitutes_session_id_when_available(self, tmp_path):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_skill(
+                tmp_path,
+                "sess-templated",
+                body="Session: ${HERMES_SESSION_ID}",
+            )
+            scan_skill_commands()
+            msg = build_skill_invocation_message(
+                "/sess-templated", task_id="abc-123"
+            )
+
+        assert msg is not None
         assert "Session: abc-123" in msg
 
     def test_leaves_session_id_token_when_missing(self, tmp_path):

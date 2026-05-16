@@ -473,9 +473,7 @@ class TestGetSectionConfigSummary:
         def env_side(key):
             return "true" if key == "WHATSAPP_ENABLED" else ""
 
-        import hermes_cli.gateway as gateway_mod
-        with patch.object(setup_mod, "get_env_value", side_effect=env_side), \
-             patch.object(gateway_mod, "get_env_value", side_effect=env_side):
+        with patch.object(setup_mod, "get_env_value", side_effect=env_side):
             result = setup_mod._get_section_config_summary({}, "gateway")
         assert result is not None
         assert "WhatsApp" in result
@@ -485,9 +483,7 @@ class TestGetSectionConfigSummary:
         def env_side(key):
             return "http://signal.local" if key == "SIGNAL_HTTP_URL" else ""
 
-        import hermes_cli.gateway as gateway_mod
-        with patch.object(setup_mod, "get_env_value", side_effect=env_side), \
-             patch.object(gateway_mod, "get_env_value", side_effect=env_side):
+        with patch.object(setup_mod, "get_env_value", side_effect=env_side):
             result = setup_mod._get_section_config_summary({}, "gateway")
         assert result is not None
         assert "Signal" in result
@@ -535,28 +531,13 @@ class TestGetSectionConfigSummary:
         assert result == "gpt-5"
 
     def test_gateway_matches_platform_registry(self):
-        """Every built-in platform should be recognised by its primary
-        env-var sentinel — i.e. the summary must not drift from the
+        """Every platform in _GATEWAY_PLATFORMS should be recognised by its
+        own env-var sentinel — i.e. the summary must not drift from the
         registry used by the setup checklist."""
-        from hermes_cli.gateway import _PLATFORMS
-
-        for plat in _PLATFORMS:
-            label = plat["label"]
-            env_var = plat.get("token_var")
-            if not env_var:
-                continue
-            # Some platforms require a specific value shape (e.g. WhatsApp
-            # needs the literal "true"). Use a sentinel that satisfies every
-            # real validator _platform_status() currently checks.
+        for label, env_var, _fn in setup_mod._GATEWAY_PLATFORMS:
             def env_side(key, _target=env_var):
-                if key != _target:
-                    return ""
-                if _target == "WHATSAPP_ENABLED":
-                    return "true"
-                return "x"
-            import hermes_cli.gateway as gateway_mod
-            with patch.object(setup_mod, "get_env_value", side_effect=env_side), \
-                 patch.object(gateway_mod, "get_env_value", side_effect=env_side):
+                return "x" if key == _target else ""
+            with patch.object(setup_mod, "get_env_value", side_effect=env_side):
                 result = setup_mod._get_section_config_summary({}, "gateway")
             expected = setup_mod._gateway_platform_short_label(label)
             assert result is not None, f"{label} ({env_var}) not recognised"

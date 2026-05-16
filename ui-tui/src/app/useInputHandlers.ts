@@ -10,9 +10,7 @@ import type {
   SudoRespondResponse,
   VoiceRecordResponse
 } from '../gatewayTypes.js'
-import { isAction, isCopyShortcut, isMac, isVoiceToggleKey } from '../lib/platform.js'
-import { computePrecisionWheelStep, initPrecisionWheel } from '../lib/precisionWheel.js'
-import { computeWheelStep, initWheelAccelForHost } from '../lib/wheelAccel.js'
+import { isAction, isMac } from '../lib/platform.js'
 
 import { getInputSelection } from './inputSelectionStore.js'
 import type { InputHandlerContext, InputHandlerResult } from './interfaces.js'
@@ -113,7 +111,11 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
   const copySelection = () => {
     // ink's copySelection() already calls setClipboard() which handles
     // pbcopy (macOS), wl-copy/xclip (Linux), tmux, and OSC 52 fallback.
-    terminal.selection.copySelection()
+    const text = terminal.selection.copySelection()
+
+    if (text) {
+      actions.sys(`copied ${text.length} chars`)
+    }
   }
 
   const clearSelection = () => {
@@ -260,22 +262,10 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
       // handlers must receive keystrokes (arrow keys, numbers, Enter).  Only
       // intercept Ctrl+C here so the user can deny/dismiss — all other keys
       // fall through to the component-level handlers.
-      //
-      // Scroll inputs (wheel / PageUp / PageDown / Shift+↑↓) are special:
-      // they must reach the transcript scroll handlers below even with a
-      // prompt up.  Long-thread context the prompt is asking about often
-      // lives above the visible viewport, and being unable to read it while
-      // answering felt like the prompt had locked the entire UI.  Explicitly
-      // skip the prompt-overlay early-return for scroll keys so they fall
-      // through to the wheel / PageUp / Shift+arrow handlers below.
-      const promptOverlay = overlay.approval || overlay.clarify || overlay.confirm
-      const fallThroughForScroll = promptOverlay && shouldFallThroughForScroll(key)
-
-      if (promptOverlay && !fallThroughForScroll) {
+      if (overlay.approval || overlay.clarify || overlay.confirm) {
         if (isCtrl(key, ch, 'c')) {
           cancelOverlayFromCtrlC()
         }
-
         return
       }
 
@@ -408,21 +398,6 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
       return scrollTranscript(key.pageUp ? -step : step)
     }
 
-    // Escape-based voice bindings (ctrl/alt/super+escape) must win before the
-    // generic Esc handlers below; otherwise queue-edit cancel / selection-clear
-    // would swallow the chord and /voice would advertise a shortcut that never
-    // actually toggles recording in those UI states.
-    if (key.escape && isVoiceToggleKey(key, ch, voice.recordKey)) {
-      return voiceRecordToggle()
-    }
-
-    // Queue-edit cancel beats selection-clear for plain Esc: the queue header
-    // explicitly promises "Esc cancel", so honoring it takes priority over the
-    // implicit selection-dismissal convention. Without an active edit, fall through.
-    if (key.escape && cState.queueEditIdx !== null) {
-      return cActions.clearIn()
-    }
-
     if (key.escape && terminal.hasSelection) {
       return clearSelection()
     }
@@ -453,7 +428,7 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
       }
     }
 
-    if (isCopyShortcut(key, ch)) {
+    if (isAction(key, ch, 'c')) {
       if (terminal.hasSelection) {
         return copySelection()
       }
@@ -471,12 +446,6 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
       if (isMac) {
         return
       }
-    }
-
-    if (isCtrl(key, ch, 'x') && cState.queueEditIdx !== null) {
-      cActions.removeQueue(cState.queueEditIdx)
-
-      return cActions.clearIn()
     }
 
     if (key.ctrl && ch.toLowerCase() === 'c') {
@@ -501,29 +470,8 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
     }
 
     if (isAction(key, ch, 'l')) {
-      clearSelection()
-      forceRedraw(terminal.stdout ?? process.stdout)
-
-      return
-    }
-
-    if (isVoiceToggleKey(key, ch, voice.recordKey)) {
-      return voiceRecordToggle()
-    }
-
-    // Cmd/Ctrl+G, plus Alt+G fallback for VSCode/Cursor (they bind the
-    // primary keystroke to "Find Next" before the TUI sees it; Alt+G
-    // arrives as meta+g across platforms).
-    if (ch.toLowerCase() === 'g' && (isAction(key, ch, 'g') || key.meta)) {
-      return void cActions.openEditor().catch((err: unknown) => {
-        actions.sys(err instanceof Error ? `failed to open editor: ${err.message}` : 'failed to open editor')
-      })
-    }
-
-    // shift-tab flips yolo without spending a turn (claude-code parity)
-    if (key.shift && key.tab && !cState.completions.length) {
-      if (!live.sid) {
-        return void actions.sys('yolo needs an active session')
+      if (actions.guardBusySessionSwitch()) {
+        return
       }
 
       // gateway.rpc swallows errors with its own sys() message and resolves to null,
@@ -537,10 +485,12 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
           return actions.sys('yolo off')
         }
 
-        if (r) {
-          actions.sys('failed to toggle yolo')
-        }
-      })
+    if (isAction(key, ch, 'b')) {
+      return voice.recording ? voiceStop() : voiceStart()
+    }
+
+    if (isAction(key, ch, 'g')) {
+      return cActions.openEditor()
     }
 
     if (key.tab && cState.completions.length) {

@@ -83,6 +83,15 @@ class TestHandleFunctionCall:
                 tool_call_id="call-1",
                 duration_ms=ANY,
             ),
+            call(
+                "transform_tool_result",
+                tool_name="web_search",
+                args={"q": "test"},
+                result='{"ok":true}',
+                task_id="task-1",
+                session_id="session-1",
+                tool_call_id="call-1",
+            ),
         ]
 
     def test_post_tool_call_receives_non_negative_integer_duration_ms(self):
