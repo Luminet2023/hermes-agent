@@ -2032,32 +2032,6 @@ class TestOrchestratorRoleSchema(unittest.TestCase):
         self.assertIn("role", task_props)
         self.assertEqual(task_props["role"]["enum"], ["leaf", "orchestrator"])
 
-    def test_acp_command_description_has_do_not_set_guidance(self):
-        # acp_command/acp_args descriptions must NOT bias the model toward
-        # assuming an ACP CLI (Claude, Copilot, etc.) is installed. They must
-        # carry explicit "do not set unless told" guidance so the model doesn't
-        # hallucinate ACP availability (#22013).
-        from tools.delegate_tool import DELEGATE_TASK_SCHEMA
-        props = DELEGATE_TASK_SCHEMA["parameters"]["properties"]
-
-        top_acp_desc = props["acp_command"]["description"]
-        self.assertIn("Do NOT set", top_acp_desc)
-        self.assertIn("explicitly told you", top_acp_desc)
-
-        task_props = props["tasks"]["items"]["properties"]
-        per_task_acp_desc = task_props["acp_command"]["description"]
-        self.assertIn("Do NOT set", per_task_acp_desc)
-
-    def test_acp_command_description_has_no_claude_as_example(self):
-        # Descriptions must not list 'claude' as a canonical example value —
-        # that directly primes the model to attempt Claude ACP even when it is
-        # not installed (#22013).
-        from tools.delegate_tool import DELEGATE_TASK_SCHEMA
-        props = DELEGATE_TASK_SCHEMA["parameters"]["properties"]
-        top_acp_desc = props["acp_command"]["description"].lower()
-        self.assertNotIn("e.g. 'claude'", top_acp_desc)
-        self.assertNotIn("e.g. \"claude\"", top_acp_desc)
-
 
 # Sentinel used to distinguish "role kwarg omitted" from "role=None".
 _SENTINEL = object()
@@ -2348,7 +2322,7 @@ class TestOrchestratorEndToEnd(unittest.TestCase):
                 m.thinking_callback = None
                 orch_mock["agent"] = m
 
-                def _orchestrator_run(user_message=None, task_id=None):
+                def _orchestrator_run(user_message=None):
                     # Re-entrant: orchestrator spawns two leaves
                     delegate_task(
                         tasks=[{"goal": "leaf-A"}, {"goal": "leaf-B"}],
@@ -2380,151 +2354,6 @@ class TestOrchestratorEndToEnd(unittest.TestCase):
         self.assertFalse(built_agents[1]["is_orchestrator_prompt"])
         self.assertNotIn("delegation", built_agents[2]["enabled_toolsets"])
         self.assertFalse(built_agents[2]["is_orchestrator_prompt"])
-
-
-class TestSubagentApprovalCallback(unittest.TestCase):
-    """Subagent worker threads must have a non-interactive approval callback
-    installed so dangerous-command prompts don't fall back to input() and
-    deadlock the parent's prompt_toolkit TUI.
-
-    Governed by delegation.subagent_auto_approve:
-      false (default) → _subagent_auto_deny
-      true            → _subagent_auto_approve
-    """
-
-    def test_auto_deny_returns_deny(self):
-        from tools.delegate_tool import _subagent_auto_deny
-        self.assertEqual(
-            _subagent_auto_deny("rm -rf /tmp/x", "dangerous"),
-            "deny",
-        )
-
-    def test_auto_approve_returns_once(self):
-        from tools.delegate_tool import _subagent_auto_approve
-        self.assertEqual(
-            _subagent_auto_approve("rm -rf /tmp/x", "dangerous"),
-            "once",
-        )
-
-    @patch("tools.delegate_tool._load_config", return_value={})
-    def test_getter_defaults_to_deny(self, _mock_cfg):
-        from tools.delegate_tool import (
-            _get_subagent_approval_callback,
-            _subagent_auto_deny,
-        )
-        self.assertIs(_get_subagent_approval_callback(), _subagent_auto_deny)
-
-    @patch(
-        "tools.delegate_tool._load_config",
-        return_value={"subagent_auto_approve": False},
-    )
-    def test_getter_explicit_false_is_deny(self, _mock_cfg):
-        from tools.delegate_tool import (
-            _get_subagent_approval_callback,
-            _subagent_auto_deny,
-        )
-        self.assertIs(_get_subagent_approval_callback(), _subagent_auto_deny)
-
-    @patch(
-        "tools.delegate_tool._load_config",
-        return_value={"subagent_auto_approve": True},
-    )
-    def test_getter_true_is_approve(self, _mock_cfg):
-        from tools.delegate_tool import (
-            _get_subagent_approval_callback,
-            _subagent_auto_approve,
-        )
-        self.assertIs(_get_subagent_approval_callback(), _subagent_auto_approve)
-
-    @patch(
-        "tools.delegate_tool._load_config",
-        return_value={"subagent_auto_approve": "yes"},
-    )
-    def test_getter_truthy_string_is_approve(self, _mock_cfg):
-        """is_truthy_value accepts 'yes'/'1'/'true' as truthy."""
-        from tools.delegate_tool import (
-            _get_subagent_approval_callback,
-            _subagent_auto_approve,
-        )
-        self.assertIs(_get_subagent_approval_callback(), _subagent_auto_approve)
-
-    def test_executor_initializer_installs_callback_in_worker(self):
-        """The initializer sets the callback on the worker thread's TLS,
-        not the parent's — verifies the fix actually scopes to workers.
-        """
-        from concurrent.futures import ThreadPoolExecutor
-        from tools.terminal_tool import (
-            set_approval_callback as _set_cb,
-            _get_approval_callback,
-        )
-        from tools.delegate_tool import _subagent_auto_deny
-
-        # Parent thread has no callback.
-        _set_cb(None)
-        self.assertIsNone(_get_approval_callback())
-
-        seen = []
-
-        def worker():
-            seen.append(_get_approval_callback())
-
-        with ThreadPoolExecutor(
-            max_workers=1,
-            initializer=_set_cb,
-            initargs=(_subagent_auto_deny,),
-        ) as executor:
-            executor.submit(worker).result()
-
-        self.assertEqual(seen, [_subagent_auto_deny])
-        # Parent's callback slot is still empty (TLS isolates threads).
-        self.assertIsNone(_get_approval_callback())
-
-
-class TestFallbackModelInheritance(unittest.TestCase):
-    """Subagents must inherit the parent's fallback provider chain."""
-
-    def test_child_inherits_fallback_chain(self):
-        """_build_child_agent passes parent._fallback_chain as fallback_model."""
-        parent = _make_mock_parent(depth=0)
-        fallback_entry = {"provider": "openrouter", "model": "gpt-4o-mini", "api_key": "sk-or-x"}
-        parent._fallback_chain = [fallback_entry]
-
-        with patch("run_agent.AIAgent") as MockAgent:
-            MockAgent.return_value = MagicMock()
-            _build_child_agent(
-                task_index=0,
-                goal="test fallback inheritance",
-                context=None,
-                toolsets=None,
-                model=None,
-                max_iterations=10,
-                parent_agent=parent,
-                task_count=1,
-            )
-
-        _, kwargs = MockAgent.call_args
-        self.assertEqual(kwargs["fallback_model"], [fallback_entry])
-
-    def test_child_gets_no_fallback_when_parent_chain_empty(self):
-        """When parent._fallback_chain is empty, fallback_model is None."""
-        parent = _make_mock_parent(depth=0)
-        parent._fallback_chain = []
-
-        with patch("run_agent.AIAgent") as MockAgent:
-            MockAgent.return_value = MagicMock()
-            _build_child_agent(
-                task_index=0,
-                goal="test no fallback",
-                context=None,
-                toolsets=None,
-                model=None,
-                max_iterations=10,
-                parent_agent=parent,
-                task_count=1,
-            )
-
-        _, kwargs = MockAgent.call_args
-        self.assertIsNone(kwargs["fallback_model"])
 
 
 if __name__ == "__main__":

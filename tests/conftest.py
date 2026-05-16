@@ -232,60 +232,6 @@ _HERMES_BEHAVIORAL_VARS = frozenset({
     "SIGNAL_ALLOW_ALL_USERS",
     "EMAIL_ALLOW_ALL_USERS",
     "SMS_ALLOW_ALL_USERS",
-    # Gateway home channels are set by /sethome in real profiles. Tests that
-    # exercise dashboard notification toggles must opt in explicitly or they
-    # can accidentally subscribe against a developer's real home channel.
-    "TELEGRAM_HOME_CHANNEL",
-    "TELEGRAM_HOME_CHANNEL_THREAD_ID",
-    "TELEGRAM_HOME_CHANNEL_NAME",
-    "DISCORD_HOME_CHANNEL",
-    "DISCORD_HOME_CHANNEL_THREAD_ID",
-    "DISCORD_HOME_CHANNEL_NAME",
-    "SLACK_HOME_CHANNEL",
-    "SLACK_HOME_CHANNEL_THREAD_ID",
-    "SLACK_HOME_CHANNEL_NAME",
-    "WHATSAPP_HOME_CHANNEL",
-    "WHATSAPP_HOME_CHANNEL_THREAD_ID",
-    "WHATSAPP_HOME_CHANNEL_NAME",
-    "SIGNAL_HOME_CHANNEL",
-    "SIGNAL_HOME_CHANNEL_THREAD_ID",
-    "SIGNAL_HOME_CHANNEL_NAME",
-    "EMAIL_HOME_CHANNEL",
-    "EMAIL_HOME_CHANNEL_THREAD_ID",
-    "EMAIL_HOME_CHANNEL_NAME",
-    "SMS_HOME_CHANNEL",
-    "SMS_HOME_CHANNEL_THREAD_ID",
-    "SMS_HOME_CHANNEL_NAME",
-    "MATTERMOST_HOME_CHANNEL",
-    "MATTERMOST_HOME_CHANNEL_THREAD_ID",
-    "MATTERMOST_HOME_CHANNEL_NAME",
-    "MATRIX_HOME_CHANNEL",
-    "MATRIX_HOME_CHANNEL_THREAD_ID",
-    "MATRIX_HOME_CHANNEL_NAME",
-    "DINGTALK_HOME_CHANNEL",
-    "DINGTALK_HOME_CHANNEL_THREAD_ID",
-    "DINGTALK_HOME_CHANNEL_NAME",
-    "FEISHU_HOME_CHANNEL",
-    "FEISHU_HOME_CHANNEL_THREAD_ID",
-    "FEISHU_HOME_CHANNEL_NAME",
-    "WECOM_HOME_CHANNEL",
-    "WECOM_HOME_CHANNEL_THREAD_ID",
-    "WECOM_HOME_CHANNEL_NAME",
-    # Platform gating — set by load_gateway_config() as a side effect when
-    # a config.yaml is present, so individual test bodies that call the
-    # loader leak these values into later tests on the same xdist worker.
-    # Force-clear on every test setup so the leak can't happen.
-    "SLACK_REQUIRE_MENTION",
-    "SLACK_STRICT_MENTION",
-    "SLACK_FREE_RESPONSE_CHANNELS",
-    "SLACK_ALLOW_BOTS",
-    "SLACK_REACTIONS",
-    "DISCORD_REQUIRE_MENTION",
-    "DISCORD_FREE_RESPONSE_CHANNELS",
-    "TELEGRAM_REQUIRE_MENTION",
-    "WHATSAPP_REQUIRE_MENTION",
-    "DINGTALK_REQUIRE_MENTION",
-    "MATRIX_REQUIRE_MENTION",
 })
 
 
@@ -386,14 +332,6 @@ def _reset_module_state():
     that don't exist yet (test collection before production import) are
     skipped silently — production import later creates fresh empty state.
     """
-    # --- logging — quiet/one-shot paths mutate process-global logger state ---
-    logging.disable(logging.NOTSET)
-    for _logger_name in ("tools", "run_agent", "trajectory_compressor", "cron", "hermes_cli"):
-        _logger = logging.getLogger(_logger_name)
-        _logger.disabled = False
-        _logger.setLevel(logging.NOTSET)
-        _logger.propagate = True
-
     # --- tools.approval — the single biggest source of cross-test pollution ---
     try:
         from tools import approval as _approval_mod
@@ -448,41 +386,10 @@ def _reset_module_state():
     except Exception:
         pass
 
-    # --- tools.terminal_tool — active environment/cwd cache ---
-    # File tools prefer a live terminal cwd when one is cached for the task.
-    # Clear terminal environments between tests so a prior terminal call can't
-    # override TERMINAL_CWD in path-resolution tests.
-    try:
-        from tools import terminal_tool as _term_mod
-        _envs_to_cleanup = []
-        with _term_mod._env_lock:
-            _envs_to_cleanup = list(_term_mod._active_environments.values())
-            _term_mod._active_environments.clear()
-            _term_mod._last_activity.clear()
-            _term_mod._creation_locks.clear()
-        for _env in _envs_to_cleanup:
-            try:
-                _env.cleanup()
-            except Exception:
-                pass
-    except Exception:
-        pass
-
     # --- tools.credential_files — ContextVar<dict> ---
     try:
         from tools import credential_files as _credf_mod
         _credf_mod._registered_files_var.set({})
-    except Exception:
-        pass
-
-    # --- agent.auxiliary_client — runtime main provider/model override and
-    #     payment-error health cache. Both are process-global in production;
-    #     reset them per test so one worker's fallback/402 test does not make
-    #     later auxiliary-client tests skip otherwise-available providers.
-    try:
-        from agent import auxiliary_client as _aux_mod
-        _aux_mod.clear_runtime_main()
-        _aux_mod._reset_aux_unhealthy_cache()
     except Exception:
         pass
 

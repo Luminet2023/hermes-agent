@@ -1,11 +1,6 @@
-import {
-  useEffect,
-  useLayoutEffect,
-  useState,
-  useCallback,
-  useRef,
-} from "react";
-import { FileText, RefreshCw } from "lucide-react";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { FileText, RefreshCw, ChevronRight } from "lucide-react";
+import { H2 } from "@nous-research/ui";
 import { api } from "@/lib/api";
 import { Badge } from "@nous-research/ui/ui/components/badge";
 import { Button } from "@nous-research/ui/ui/components/button";
@@ -43,8 +38,38 @@ const LINE_COLORS: Record<string, string> = {
   debug: "text-muted-foreground/60",
 };
 
-const toOptions = <T extends string>(values: readonly T[]) =>
-  values.map((v) => ({ value: v, label: v }));
+function SidebarHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 px-2.5 pt-3 pb-1">
+      {children}
+    </span>
+  );
+}
+
+function SidebarItem<T extends string>({
+  label,
+  value,
+  current,
+  onChange,
+}: SidebarItemProps<T>) {
+  const isActive = current === value;
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(value)}
+      className={`group flex items-center gap-2 px-2.5 py-1 text-left text-xs transition-colors cursor-pointer ${
+        isActive
+          ? "bg-primary/10 text-primary font-medium"
+          : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+      }`}
+    >
+      <span className="flex-1 truncate">{label}</span>
+      {isActive && (
+        <ChevronRight className="h-3 w-3 text-primary/50 shrink-0" />
+      )}
+    </button>
+  );
+}
 
 export default function LogsPage() {
   const [file, setFile] = useState<(typeof FILES)[number]>("agent");
@@ -146,62 +171,13 @@ export default function LogsPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <PluginSlot name="logs:top" />
-      <div
-        role="toolbar"
-        aria-label={t.logs.title}
-        className="flex flex-wrap items-center gap-x-6 gap-y-2"
-      >
-        <FilterGroup label={t.logs.file}>
-          <Segmented
-            value={file}
-            onChange={setFile}
-            options={toOptions(FILES)}
-          />
-        </FilterGroup>
-
-        <FilterGroup label={t.logs.level}>
-          <Segmented
-            value={level}
-            onChange={setLevel}
-            options={toOptions(LEVELS)}
-          />
-        </FilterGroup>
-
-        <FilterGroup label={t.logs.component}>
-          <Segmented
-            value={component}
-            onChange={setComponent}
-            options={toOptions(COMPONENTS)}
-          />
-        </FilterGroup>
-
-        <FilterGroup label={t.logs.lines}>
-          <Segmented
-            value={String(lineCount)}
-            onChange={(v) =>
-              setLineCount(Number(v) as (typeof LINE_COUNTS)[number])
-            }
-            options={LINE_COUNTS.map((n) => ({
-              value: String(n),
-              label: String(n),
-            }))}
-          />
-        </FilterGroup>
-      </div>
-
-      <Card>
-        <CardHeader className="py-3 px-4">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <FileText className="h-4 w-4" />
-            {file}.log
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          {error && (
-            <div className="bg-destructive/10 border-b border-destructive/20 p-3">
-              <p className="text-sm text-destructive">{error}</p>
-            </div>
+      {/* ═══════════════ Header ═══════════════ */}
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-2">
+          <FileText className="h-5 w-5 text-muted-foreground" />
+          <H2 variant="sm">{t.logs.title}</H2>
+          {loading && (
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           )}
 
           <div
@@ -213,21 +189,116 @@ export default function LogsPage() {
                 {t.logs.noLogLines}
               </p>
             )}
-            {lines.map((line, i) => {
-              const cls = classifyLine(line);
-              return (
-                <div
-                  key={i}
-                  className={`${LINE_COLORS[cls]} hover:bg-secondary/20 px-1 -mx-1`}
-                >
-                  {line}
-                </div>
-              );
-            })}
           </div>
-        </CardContent>
-      </Card>
-      <PluginSlot name="logs:bottom" />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={fetchLogs}
+            className="text-xs h-7"
+          >
+            <RefreshCw className="h-3 w-3 mr-1" />
+            {t.common.refresh}
+          </Button>
+        </div>
+      </div>
+
+      {/* ═══════════════ Sidebar + Content ═══════════════ */}
+      <div
+        className="flex flex-col sm:flex-row gap-4"
+        style={{ minHeight: "calc(100vh - 180px)" }}
+      >
+        {/* ---- Sidebar ---- */}
+        <div className="sm:w-44 sm:shrink-0">
+          <div className="sm:sticky sm:top-[72px] flex flex-col gap-0.5">
+            <SidebarHeading>{t.logs.file}</SidebarHeading>
+            {FILES.map((f) => (
+              <SidebarItem
+                key={f}
+                label={f}
+                value={f}
+                current={file}
+                onChange={setFile}
+              />
+            ))}
+
+            <SidebarHeading>{t.logs.level}</SidebarHeading>
+            {LEVELS.map((l) => (
+              <SidebarItem
+                key={l}
+                label={l}
+                value={l}
+                current={level}
+                onChange={setLevel}
+              />
+            ))}
+
+            <SidebarHeading>{t.logs.component}</SidebarHeading>
+            {COMPONENTS.map((c) => (
+              <SidebarItem
+                key={c}
+                label={c}
+                value={c}
+                current={component}
+                onChange={setComponent}
+              />
+            ))}
+
+            <SidebarHeading>{t.logs.lines}</SidebarHeading>
+            {LINE_COUNTS.map((n) => (
+              <SidebarItem
+                key={n}
+                label={String(n)}
+                value={String(n)}
+                current={String(lineCount)}
+                onChange={(v) =>
+                  setLineCount(Number(v) as (typeof LINE_COUNTS)[number])
+                }
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* ---- Content ---- */}
+        <div className="flex-1 min-w-0">
+          <Card>
+            <CardHeader className="py-3 px-4">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <FileText className="h-4 w-4" />
+                {file}.log
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {error && (
+                <div className="bg-destructive/10 border-b border-destructive/20 p-3">
+                  <p className="text-sm text-destructive">{error}</p>
+                </div>
+              )}
+
+              <div
+                ref={scrollRef}
+                className="p-4 font-mono-ui text-xs leading-5 overflow-auto max-h-[600px] min-h-[200px]"
+              >
+                {lines.length === 0 && !loading && (
+                  <p className="text-muted-foreground text-center py-8">
+                    {t.logs.noLogLines}
+                  </p>
+                )}
+                {lines.map((line, i) => {
+                  const cls = classifyLine(line);
+                  return (
+                    <div
+                      key={i}
+                      className={`${LINE_COLORS[cls]} hover:bg-secondary/20 px-1 -mx-1`}
+                    >
+                      {line}
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
     </div>
   );
 }

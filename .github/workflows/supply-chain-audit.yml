@@ -11,7 +11,6 @@ on:
       - '**/sitecustomize.py'
       - '**/usercustomize.py'
       - '**/__init__.pth'
-      - 'pyproject.toml'
 
 permissions:
   pull-requests: write

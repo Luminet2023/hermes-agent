@@ -166,9 +166,9 @@ export function FloatingOverlays({
             <Box marginTop={1}>
               <OverlayHint t={theme}>
                 {overlay.pager.offset + pagerPageSize < overlay.pager.lines.length
-                  ? `↑↓/jk line · Enter/Space/PgDn page · b/PgUp back · g/G top/bottom · Esc/q close (${Math.min(overlay.pager.offset + pagerPageSize, overlay.pager.lines.length)}/${overlay.pager.lines.length})`
-                  : `end · ↑↓/jk · b/PgUp back · g top · Esc/q close (${overlay.pager.lines.length} lines)`}
-              </OverlayHint>
+                  ? `↑↓/jk line · Enter/Space/PgDn page · b/PgUp back · g/G top/bottom · q close (${Math.min(overlay.pager.offset + pagerPageSize, overlay.pager.lines.length)}/${overlay.pager.lines.length})`
+                  : `end · ↑↓/jk · b/PgUp back · g top · q close (${overlay.pager.lines.length} lines)`}
+              </Text>
             </Box>
           </Box>
         </FloatBox>

@@ -41,6 +41,9 @@ export function SessionPicker({ gw, onCancel, onSelect, t }: SessionPickerProps)
 
   useOverlayKeys({ onClose: onCancel })
 
+  const { stdout } = useStdout()
+  const width = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, (stdout?.columns ?? 80) - 6))
+
   useEffect(() => {
     gw.request<SessionListResponse>('session.list', { limit: 200 })
       .then(raw => {
@@ -167,42 +170,36 @@ export function SessionPicker({ gw, onCancel, onSelect, t }: SessionPickerProps)
 
   return (
     <Box flexDirection="column" width={width}>
-      <Text bold color={t.color.accent}>
+      <Text bold color={t.color.amber}>
         Resume Session
       </Text>
 
       {offset > 0 && <Text color={t.color.muted}>  ↑ {offset} more</Text>}
 
-      {items.slice(offset, offset + VISIBLE).map((s, vi) => {
-        const i = offset + vi
+      {items.slice(off, off + VISIBLE).map((s, vi) => {
+        const i = off + vi
         const selected = sel === i
-        const pendingDelete = confirmDelete === i
 
         return (
           <Box key={s.id}>
-            <Text bold={selected} color={selected ? t.color.accent : t.color.muted} inverse={selected}>
+            <Text bold={selected} color={selected ? t.color.amber : t.color.dim} inverse={selected}>
               {selected ? '▸ ' : '  '}
             </Text>
 
             <Box width={30}>
-              <Text bold={selected} color={selected ? t.color.accent : t.color.muted} inverse={selected}>
+              <Text bold={selected} color={selected ? t.color.amber : t.color.dim} inverse={selected}>
                 {String(i + 1).padStart(2)}. [{s.id}]
               </Text>
             </Box>
 
             <Box width={30}>
-              <Text bold={selected} color={selected ? t.color.accent : t.color.muted} inverse={selected}>
+              <Text bold={selected} color={selected ? t.color.amber : t.color.dim} inverse={selected}>
                 ({s.message_count} msgs, {age(s.started_at)}, {s.source || 'tui'})
               </Text>
             </Box>
 
-            <Text
-              bold={selected}
-              color={pendingDelete ? t.color.label : selected ? t.color.accent : t.color.muted}
-              inverse={selected}
-              wrap="truncate-end"
-            >
-              {pendingDelete ? 'press d again to delete' : s.title || s.preview || '(untitled)'}
+            <Text bold={selected} color={selected ? t.color.amber : t.color.dim} inverse={selected} wrap="truncate-end">
+              {s.title || s.preview || '(untitled)'}
             </Text>
           </Box>
         )

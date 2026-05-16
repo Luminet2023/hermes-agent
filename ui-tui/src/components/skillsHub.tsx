@@ -11,6 +11,14 @@ const VISIBLE = 12
 const MIN_WIDTH = 40
 const MAX_WIDTH = 90
 
+const pageOffset = (count: number, sel: number) => Math.max(0, Math.min(sel - Math.floor(VISIBLE / 2), count - VISIBLE))
+
+const visibleItems = (items: string[], sel: number) => {
+  const off = pageOffset(items.length, sel)
+
+  return { items: items.slice(off, off + VISIBLE), off }
+}
+
 export function SkillsHub({ gw, onClose, t }: SkillsHubProps) {
   const [skillsByCat, setSkillsByCat] = useState<Record<string, string[]>>({})
   const [selectedCat, setSelectedCat] = useState('')
@@ -194,8 +202,8 @@ export function SkillsHub({ gw, onClose, t }: SkillsHubProps) {
   if (!cats.length) {
     return (
       <Box flexDirection="column" width={width}>
-        <Text color={t.color.muted}>no skills available</Text>
-        <OverlayHint t={t}>Esc/q cancel</OverlayHint>
+        <Text color={t.color.dim}>no skills available</Text>
+        <Text color={t.color.dim}>Esc to cancel</Text>
       </Box>
     )
   }
@@ -206,7 +214,7 @@ export function SkillsHub({ gw, onClose, t }: SkillsHubProps) {
 
     return (
       <Box flexDirection="column" width={width}>
-        <Text bold color={t.color.accent}>
+        <Text bold color={t.color.amber}>
           Skills Hub
         </Text>
 
@@ -219,7 +227,7 @@ export function SkillsHub({ gw, onClose, t }: SkillsHubProps) {
           return (
             <Text
               bold={catIdx === idx}
-              color={catIdx === idx ? t.color.accent : t.color.muted}
+              color={catIdx === idx ? t.color.amber : t.color.dim}
               inverse={catIdx === idx}
               key={row}
               wrap="truncate-end"
@@ -241,7 +249,7 @@ export function SkillsHub({ gw, onClose, t }: SkillsHubProps) {
 
     return (
       <Box flexDirection="column" width={width}>
-        <Text bold color={t.color.accent}>
+        <Text bold color={t.color.amber}>
           {selectedCat}
         </Text>
 
@@ -255,7 +263,7 @@ export function SkillsHub({ gw, onClose, t }: SkillsHubProps) {
           return (
             <Text
               bold={skillIdx === idx}
-              color={skillIdx === idx ? t.color.accent : t.color.muted}
+              color={skillIdx === idx ? t.color.amber : t.color.dim}
               inverse={skillIdx === idx}
               key={row}
               wrap="truncate-end"
@@ -278,7 +286,7 @@ export function SkillsHub({ gw, onClose, t }: SkillsHubProps) {
 
   return (
     <Box flexDirection="column" width={width}>
-      <Text bold color={t.color.accent}>
+      <Text bold color={t.color.amber}>
         {info?.name ?? skillName}
       </Text>
 

@@ -59,6 +59,29 @@ DEFAULT_PORT = 8644
 _INSECURE_NO_AUTH = "INSECURE_NO_AUTH"
 _DYNAMIC_ROUTES_FILENAME = "webhook_subscriptions.json"
 
+# Hostnames/IP literals that only serve connections originating on the same
+# machine. Anything else is treated as a public bind for safety-rail purposes.
+_LOOPBACK_HOSTS = frozenset({
+    "127.0.0.1",
+    "localhost",
+    "::1",
+    "ip6-localhost",
+    "ip6-loopback",
+})
+
+
+def _is_loopback_host(host: str) -> bool:
+    """True when `host` binds only to the local machine.
+
+    Covers IPv4 loopback, the standard `localhost` alias, IPv6 loopback in
+    both bracketed and bare form, and the common Debian-style aliases. Any
+    falsy value (empty string, None) is conservatively treated as non-loopback
+    because an unset host usually means the platform-default public bind.
+    """
+    if not host:
+        return False
+    return host.strip().lower() in _LOOPBACK_HOSTS
+
 
 def check_webhook_requirements() -> bool:
     """Check if webhook adapter dependencies are available."""
@@ -202,26 +225,22 @@ class WebhookAdapter(BasePlatformAdapter):
         if deliver_type == "github_comment":
             return await self._deliver_github_comment(content, delivery)
 
-        # Cross-platform delivery — any platform with a gateway adapter
-        if self.gateway_runner and deliver_type in (
-            "telegram",
-            "discord",
-            "slack",
-            "signal",
-            "sms",
-            "whatsapp",
-            "matrix",
-            "mattermost",
-            "homeassistant",
-            "email",
-            "dingtalk",
-            "feishu",
-            "wecom",
-            "wecom_callback",
-            "weixin",
-            "bluebubbles",
-            "qqbot",
-        ):
+        # Cross-platform delivery — any platform with a gateway adapter.
+        # Check both built-in names and plugin-registered platforms.
+        _BUILTIN_DELIVER_PLATFORMS = {
+            "telegram", "discord", "slack", "signal", "sms", "whatsapp",
+            "matrix", "mattermost", "homeassistant", "email", "dingtalk",
+            "feishu", "wecom", "wecom_callback", "weixin", "bluebubbles",
+            "qqbot", "yuanbao",
+        }
+        _is_known_platform = deliver_type in _BUILTIN_DELIVER_PLATFORMS
+        if not _is_known_platform:
+            try:
+                from gateway.platform_registry import platform_registry
+                _is_known_platform = platform_registry.is_registered(deliver_type)
+            except Exception:
+                pass
+        if self.gateway_runner and _is_known_platform:
             return await self._deliver_cross_platform(
                 deliver_type, content, delivery
             )

@@ -144,22 +144,6 @@ Then:
 If you already have a `docker_volumes:` section, add the new mount to the same
 list. YAML duplicate keys silently override earlier ones.
 
-### Supported `MEDIA:` file extensions
-
-The gateway extracts `MEDIA:/path/to/file` tags from agent replies and ships the referenced file as a platform-native attachment. Supported extensions across all gateway platforms:
-
-| Category | Extensions |
-|---|---|
-| Images | `png`, `jpg`, `jpeg`, `gif`, `webp`, `bmp`, `tiff`, `svg` |
-| Audio | `mp3`, `wav`, `ogg`, `m4a`, `opus`, `flac`, `aac` |
-| Video | `mp4`, `mov`, `webm`, `mkv`, `avi` |
-| **Documents** | `pdf`, `txt`, `md`, `csv`, `json`, `xml`, `html`, `yaml`, `yml`, `log` |
-| **Office** | `docx`, `xlsx`, `pptx`, `odt`, `ods`, `odp` |
-| **Archives** | `zip`, `rar`, `7z`, `tar`, `gz`, `bz2` |
-| **Books / packages** | `epub`, `apk`, `ipa` |
-
-Anything on this list delivered as a native attachment on platforms that support it (Telegram, Discord, Signal, Slack, WhatsApp, Feishu, Matrix, etc.); on platforms without native support it falls back to a link or plain-text indicator. The **bold** categories were added in the last few releases — if you were relying on the model saying `here is the file: /path/to/report.docx` instead, swap to `MEDIA:/path/to/report.docx` for native delivery.
-
 ## Webhook Mode
 
 By default, Hermes connects to Telegram using **long polling** — the gateway makes outbound requests to Telegram's servers to fetch new updates. This works well for local and always-on deployments.

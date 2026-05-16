@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { useStdin, withInkSuspended } from '@hermes/ink'
+import { useStdin } from '@hermes/ink'
 import { useStore } from '@nanostores/react'
 import { useCallback, useMemo, useState } from 'react'
 
@@ -14,7 +14,6 @@ import { useCompletion } from '../hooks/useCompletion.js'
 import { useInputHistory } from '../hooks/useInputHistory.js'
 import { useQueue } from '../hooks/useQueue.js'
 import { isUsableClipboardText, readClipboardText } from '../lib/clipboard.js'
-import { resolveEditor } from '../lib/editor.js'
 import { readOsc52Clipboard } from '../lib/osc52.js'
 import { isRemoteShellSession } from '../lib/terminalSetup.js'
 import { pasteTokenLabel, stripTrailingPasteNewlines } from '../lib/text.js'
@@ -219,6 +218,49 @@ export function useComposerState({
       return inserted
     },
     [gw, onClipboardPaste, onImageAttached]
+  )
+
+  const handleTextPaste = useCallback(
+    ({
+      bracketed,
+      cursor,
+      hotkey,
+      text,
+      value
+    }: PasteEvent): MaybePromise<null | { cursor: number; value: string }> => {
+      if (hotkey) {
+        const preferOsc52 = isRemoteShellSession(process.env)
+
+        const readPreferredText = preferOsc52
+          ? readOsc52Clipboard(querier).then(async osc52Text => {
+              if (isUsableClipboardText(osc52Text)) {
+                return osc52Text
+              }
+
+              return readClipboardText()
+            })
+          : readClipboardText().then(async clipText => {
+              if (isUsableClipboardText(clipText)) {
+                return clipText
+              }
+
+              return readOsc52Clipboard(querier)
+            })
+
+        return readPreferredText.then(async preferredText => {
+          if (isUsableClipboardText(preferredText)) {
+            return handleResolvedPaste({ bracketed: false, cursor, text: preferredText, value })
+          }
+
+          void onClipboardPaste(false)
+
+          return null
+        })
+      }
+
+      return handleResolvedPaste({ bracketed: !!bracketed, cursor, text, value })
+    },
+    [handleResolvedPaste, onClipboardPaste, querier]
   )
 
   const handleTextPaste = useCallback(

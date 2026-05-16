@@ -281,56 +281,6 @@ export const api = {
   rescanPlugins: () =>
     fetchJSON<{ ok: boolean; count: number }>("/api/dashboard/plugins/rescan"),
 
-  getPluginsHub: () => fetchJSON<PluginsHubResponse>("/api/dashboard/plugins/hub"),
-
-  installAgentPlugin: (body: AgentPluginInstallRequest) =>
-    fetchJSON<AgentPluginInstallResponse>("/api/dashboard/agent-plugins/install", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...body }),
-    }),
-
-  enableAgentPlugin: (name: string) =>
-    fetchJSON<{ ok: boolean; name: string; unchanged?: boolean }>(
-      `/api/dashboard/agent-plugins/${encodeURIComponent(name)}/enable`,
-      { method: "POST" },
-    ),
-
-  disableAgentPlugin: (name: string) =>
-    fetchJSON<{ ok: boolean; name: string; unchanged?: boolean }>(
-      `/api/dashboard/agent-plugins/${encodeURIComponent(name)}/disable`,
-      { method: "POST" },
-    ),
-
-  updateAgentPlugin: (name: string) =>
-    fetchJSON<AgentPluginUpdateResponse>(
-      `/api/dashboard/agent-plugins/${encodeURIComponent(name)}/update`,
-      { method: "POST" },
-    ),
-
-  removeAgentPlugin: (name: string) =>
-    fetchJSON<{ ok: boolean; name: string }>(
-      `/api/dashboard/agent-plugins/${encodeURIComponent(name)}`,
-      { method: "DELETE" },
-    ),
-
-  savePluginProviders: (body: PluginProvidersPutRequest) =>
-    fetchJSON<{ ok: boolean }>("/api/dashboard/plugin-providers", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }),
-
-  setPluginVisibility: (name: string, hidden: boolean) =>
-    fetchJSON<{ ok: boolean; name: string; hidden: boolean }>(
-      `/api/dashboard/plugins/${encodeURIComponent(name)}/visibility`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hidden }),
-      },
-    ),
-
   // Dashboard themes
   getThemes: () =>
     fetchJSON<DashboardThemesResponse>("/api/dashboard/themes"),
@@ -482,6 +432,22 @@ export interface AnalyticsSkillsSummary {
   distinct_skills_used: number;
 }
 
+export interface AnalyticsSkillEntry {
+  skill: string;
+  view_count: number;
+  manage_count: number;
+  total_count: number;
+  percentage: number;
+  last_used_at: number | null;
+}
+
+export interface AnalyticsSkillsSummary {
+  total_skill_loads: number;
+  total_skill_edits: number;
+  total_skill_actions: number;
+  distinct_skills_used: number;
+}
+
 export interface AnalyticsResponse {
   daily: AnalyticsDailyEntry[];
   by_model: AnalyticsModelEntry[];
@@ -499,56 +465,6 @@ export interface AnalyticsResponse {
     summary: AnalyticsSkillsSummary;
     top_skills: AnalyticsSkillEntry[];
   };
-}
-
-export interface ProfileInfo {
-  name: string;
-  path: string;
-  is_default: boolean;
-  model: string | null;
-  provider: string | null;
-  has_env: boolean;
-  skill_count: number;
-}
-
-export interface ModelsAnalyticsModelEntry {
-  model: string;
-  provider: string;
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_tokens: number;
-  reasoning_tokens: number;
-  estimated_cost: number;
-  actual_cost: number;
-  sessions: number;
-  api_calls: number;
-  tool_calls: number;
-  last_used_at: number;
-  avg_tokens_per_session: number;
-  capabilities: {
-    supports_tools?: boolean;
-    supports_vision?: boolean;
-    supports_reasoning?: boolean;
-    context_window?: number;
-    max_output_tokens?: number;
-    model_family?: string;
-  };
-}
-
-export interface ModelsAnalyticsResponse {
-  models: ModelsAnalyticsModelEntry[];
-  totals: {
-    distinct_models: number;
-    total_input: number;
-    total_output: number;
-    total_cache_read: number;
-    total_reasoning: number;
-    total_estimated_cost: number;
-    total_actual_cost: number;
-    total_sessions: number;
-    total_api_calls: number;
-  };
-  period_days: number;
 }
 
 export interface CronJob {
@@ -725,9 +641,6 @@ export interface DashboardThemeSummary {
   description: string;
   label: string;
   name: string;
-  /** Full theme definition for user themes; undefined for built-ins
-   *  (which the frontend already has locally). */
-  definition?: DashboardTheme;
 }
 
 export interface DashboardThemesResponse {

@@ -185,6 +185,35 @@ In short: **bundled "always-works" infrastructure loads automatically; third-par
 
 When you upgrade to a version of Hermes that has opt-in plugins (config schema v21+), any user plugins already installed under `~/.hermes/plugins/` that weren't already in `plugins.disabled` are **automatically grandfathered** into `plugins.enabled`. Your existing setup keeps working. Bundled standalone plugins are NOT grandfathered — even existing users have to opt in explicitly. (Bundled platform/backend plugins never needed grandfathering because they were never gated.)
 
+Later sources override earlier ones on name collision, so a user plugin with the same name as a bundled plugin replaces it.
+
+## Plugins are opt-in
+
+**Every plugin — user-installed, bundled, or pip — is disabled by default.** Discovery finds them (so they show up in `hermes plugins` and `/plugins`), but nothing loads until you add the plugin's name to `plugins.enabled` in `~/.hermes/config.yaml`. This stops anything with hooks or tools from running without your explicit consent.
+
+```yaml
+plugins:
+  enabled:
+    - my-tool-plugin
+    - disk-cleanup
+  disabled:       # optional deny-list — always wins if a name appears in both
+    - noisy-plugin
+```
+
+Three ways to flip state:
+
+```bash
+hermes plugins                    # interactive toggle (space to check/uncheck)
+hermes plugins enable <name>      # add to allow-list
+hermes plugins disable <name>     # remove from allow-list + add to disabled
+```
+
+After `hermes plugins install owner/repo`, you're asked `Enable 'name' now? [y/N]` — defaults to no. Skip the prompt for scripted installs with `--enable` or `--no-enable`.
+
+### Migration for existing users
+
+When you upgrade to a version of Hermes that has opt-in plugins (config schema v21+), any user plugins already installed under `~/.hermes/plugins/` that weren't already in `plugins.disabled` are **automatically grandfathered** into `plugins.enabled`. Your existing setup keeps working. Bundled plugins are NOT grandfathered — even existing users have to opt in explicitly.
+
 ## Available hooks
 
 Plugins can register callbacks for these lifecycle events. See the **[Event Hooks page](/docs/user-guide/features/hooks#plugin-hooks)** for full details, callback signatures, and examples.

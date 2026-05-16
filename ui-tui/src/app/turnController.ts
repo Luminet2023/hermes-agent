@@ -185,8 +185,6 @@ class TurnController {
     this.interrupted = true
     gw.request<SessionInterruptResponse>('session.interrupt', { session_id: sid }).catch(() => {})
 
-    this.closeReasoningSegment()
-
     const segments = this.segmentMessages
     const partial = this.bufRef.trimStart()
     const tools = this.pendingSegmentTools

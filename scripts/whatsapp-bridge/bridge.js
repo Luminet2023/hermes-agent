@@ -284,34 +284,17 @@ async function startSocket() {
         if (!isSelfChat) continue;
       }
 
-      // Handle !fromMe messages (from other people) based on mode.
-      // Self-chat mode only responds to the user's own messages to
-      // themselves — stranger DMs / group pings must never reach the
-      // Python gateway, otherwise a pairing-code reply fires in response
-      // to arbitrary incoming messages (#8389).
-      if (!msg.key.fromMe) {
-        if (WHATSAPP_MODE === 'self-chat') {
-          try {
-            console.log(JSON.stringify({
-              event: 'ignored',
-              reason: 'self_chat_mode_rejects_non_self',
-              chatId,
-              senderId,
-            }));
-          } catch {}
-          continue;
-        }
-        if (!matchesAllowedUser(senderId, ALLOWED_USERS, SESSION_DIR)) {
-          try {
-            console.log(JSON.stringify({
-              event: 'ignored',
-              reason: 'allowlist_mismatch',
-              chatId,
-              senderId,
-            }));
-          } catch {}
-          continue;
-        }
+      // Check allowlist for messages from others (resolve LID ↔ phone aliases)
+      if (!msg.key.fromMe && !matchesAllowedUser(senderId, ALLOWED_USERS, SESSION_DIR)) {
+        try {
+          console.log(JSON.stringify({
+            event: 'ignored',
+            reason: 'allowlist_mismatch',
+            chatId,
+            senderId,
+          }));
+        } catch {}
+        continue;
       }
 
       const messageContent = getMessageContent(msg);

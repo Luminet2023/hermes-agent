@@ -20,105 +20,23 @@ import type { Msg, Usage } from '../types.js'
 const FACE_TICK_MS = 2500
 const HEART_COLORS = ['#ff5fa2', '#ff4d6d']
 
-// Keep verb segment width stable so status-bar content to the right doesn't
-// jitter when the ticker rotates between short/long verbs.
-export const VERB_PAD_LEN = VERBS.reduce((max, v) => Math.max(max, v.length), 0) + 1 // + ellipsis
-export const padVerb = (verb: string) => `${verb}…`.padEnd(VERB_PAD_LEN, ' ')
-
-// Compact alternates for the `emoji` and `ascii` indicator styles.
-// Each entry is a fixed-width (display-width) glyph.
-const EMOJI_FRAMES = ['⚕ ', '🌀', '🤔', '✨', '🍵', '🔮']
-const ASCII_FRAMES = ['|', '/', '-', '\\']
-
-// Faster tick for spinner-style indicators — they read as motion only
-// at frame rates closer to their authored interval.
-const SPINNER_TICK_MS = 100
-
-interface IndicatorRender {
-  frame: string
-  intervalMs: number
-  // When false, FaceTicker hides the rotating verb and just shows the
-  // glyph + duration.  Lets `unicode` stay minimal while the other
-  // styles keep the verb-rotation flavour users associate with the
-  // running… status.
-  showVerb: boolean
-}
-
-const renderIndicator = (style: IndicatorStyle, tick: number): IndicatorRender => {
-  if (style === 'kaomoji') {
-    return { frame: FACES[tick % FACES.length] ?? '', intervalMs: FACE_TICK_MS, showVerb: true }
-  }
-
-  if (style === 'emoji') {
-    return {
-      frame: EMOJI_FRAMES[tick % EMOJI_FRAMES.length] ?? '⚕ ',
-      intervalMs: SPINNER_TICK_MS * 6,
-      showVerb: true
-    }
-  }
-
-  if (style === 'ascii') {
-    return {
-      frame: ASCII_FRAMES[tick % ASCII_FRAMES.length] ?? '|',
-      intervalMs: SPINNER_TICK_MS,
-      showVerb: true
-    }
-  }
-
-  // 'unicode' — braille spinner (fixed 1-col).  Authored interval is
-  // ~80ms; honour it but bound below at a safe minimum so React
-  // re-renders stay reasonable.  This style is for users who want
-  // the cleanest possible status, so no verb rotation either.
-  const spinner = unicodeSpinners.braille
-  const frame = spinner.frames[tick % spinner.frames.length] ?? '⠋'
-
-  return { frame, intervalMs: Math.max(SPINNER_TICK_MS, spinner.interval), showVerb: false }
-}
-
 function FaceTicker({ color, startedAt }: { color: string; startedAt?: null | number }) {
-  const ui = useStore($uiState)
-  const style = ui.indicatorStyle
   const [tick, setTick] = useState(() => Math.floor(Math.random() * 1000))
-  const [verbTick, setVerbTick] = useState(() => Math.floor(Math.random() * VERBS.length))
   const [now, setNow] = useState(() => Date.now())
 
-  // Pre-compute cadence + verb-visibility for the active style so an
-  // `/indicator` switch re-arms the interval (and skips the verb timer
-  // for verb-less styles like `unicode`) without leaving the previous
-  // timer dangling.
-  const { intervalMs, showVerb } = renderIndicator(style, 0)
-
   useEffect(() => {
-    const glyph = setInterval(() => setTick(n => n + 1), intervalMs)
+    const face = setInterval(() => setTick(n => n + 1), FACE_TICK_MS)
     const clock = setInterval(() => setNow(Date.now()), 1000)
-    // Verb timer is gated on `showVerb` — `unicode` style hides the verb
-    // entirely, so cycling `verbTick` would be an avoidable re-render.
-    const verb = showVerb ? setInterval(() => setVerbTick(n => n + 1), FACE_TICK_MS) : null
 
     return () => {
-      clearInterval(glyph)
+      clearInterval(face)
       clearInterval(clock)
-
-      if (verb !== null) {
-        clearInterval(verb)
-      }
     }
-  }, [intervalMs, showVerb])
-
-  const { frame } = renderIndicator(style, tick)
-  const verb = VERBS[verbTick % VERBS.length] ?? ''
-  const verbSegment = showVerb ? ` ${padVerb(verb)}` : ''
-  // Leading space keeps a gap between the frame and the duration when the
-  // verb segment is hidden (e.g. `unicode` spinner style).  When the verb
-  // IS shown, its trailing padding already provides the gap, so the extra
-  // space is harmless.
-  const durationSegment = startedAt ? ` · ${fmtDuration(now - startedAt)}` : ''
+  }, [])
 
   return (
     <Text color={color}>
-      {frame}
-      {verbSegment}
-      {durationSegment}
+      {FACES[tick % FACES.length]} {VERBS[tick % VERBS.length]}…{startedAt ? ` · ${fmtDuration(now - startedAt)}` : ''}
     </Text>
   )
 }
@@ -309,8 +227,8 @@ export function StatusRule({
           ) : (
             <Text color={statusColor}>{status}</Text>
           )}
-          <Text color={t.color.muted}> │ {modelLabel(model, modelReasoningEffort, modelFast)}</Text>
-          {ctxLabel ? <Text color={t.color.muted}> │ {ctxLabel}</Text> : null}
+          <Text color={t.color.dim}> │ {model}</Text>
+          {ctxLabel ? <Text color={t.color.dim}> │ {ctxLabel}</Text> : null}
           {bar ? (
             <Text color={t.color.muted}>
               {' │ '}
@@ -459,8 +377,6 @@ interface StatusRuleProps {
   cols: number
   cwdLabel: string
   model: string
-  modelFast?: boolean
-  modelReasoningEffort?: string
   sessionStartedAt?: null | number
   showCost: boolean
   status: string

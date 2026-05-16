@@ -25,7 +25,6 @@ export type TerminalSetupResult = {
 }
 
 const DEFAULT_FILE_OPS: FileOps = { copyFile, mkdir, readFile, writeFile }
-const COPY_SEQUENCE = '\u001b[99;13u'
 const MULTILINE_SEQUENCE = '\\\r\n'
 
 const TERMINAL_META: Record<SupportedTerminal, { appName: string; label: string }> = {
@@ -34,14 +33,7 @@ const TERMINAL_META: Record<SupportedTerminal, { appName: string; label: string 
   windsurf: { appName: 'Windsurf', label: 'Windsurf' }
 }
 
-const MAC_COPY_BINDING: Keybinding = {
-  key: 'cmd+c',
-  command: 'workbench.action.terminal.sendSequence',
-  when: 'terminalFocus && terminalTextSelected',
-  args: { text: COPY_SEQUENCE }
-}
-
-const BASE_BINDINGS: Keybinding[] = [
+const TARGET_BINDINGS: Keybinding[] = [
   {
     key: 'shift+enter',
     command: 'workbench.action.terminal.sendSequence',
@@ -73,9 +65,6 @@ const BASE_BINDINGS: Keybinding[] = [
     args: { text: '\u001b[122;10u' }
   }
 ]
-
-const targetBindings = (platform: NodeJS.Platform): Keybinding[] =>
-  platform === 'darwin' ? [MAC_COPY_BINDING, ...BASE_BINDINGS] : BASE_BINDINGS
 
 export function detectVSCodeLikeTerminal(env: NodeJS.ProcessEnv = process.env): null | SupportedTerminal {
   const askpass = env['VSCODE_GIT_ASKPASS_MAIN']?.toLowerCase() ?? ''
@@ -183,90 +172,6 @@ function sameBinding(a: Keybinding, b: Keybinding): boolean {
   return a.key === b.key && a.command === b.command && a.when === b.when && a.args?.text === b.args?.text
 }
 
-type WhenRequirements = {
-  forbidden: Set<string>
-  required: Set<string>
-}
-
-const WHEN_TOKEN_RE = /!?[A-Za-z_][\w.]*/g
-
-function parseWhenRequirements(when: string): WhenRequirements {
-  const required = new Set<string>()
-  const forbidden = new Set<string>()
-
-  for (const [token] of when.matchAll(WHEN_TOKEN_RE)) {
-    if (token.startsWith('!')) {
-      forbidden.add(token.slice(1))
-    } else {
-      required.add(token)
-    }
-  }
-
-  return { forbidden, required }
-}
-
-function requirementsContradict(a: WhenRequirements, b: WhenRequirements): boolean {
-  for (const token of a.required) {
-    if (b.forbidden.has(token)) {
-      return true
-    }
-  }
-
-  for (const token of b.required) {
-    if (a.forbidden.has(token)) {
-      return true
-    }
-  }
-
-  return false
-}
-
-function whensOverlap(a: string, b: string): boolean {
-  if (a === b) {
-    return true
-  }
-
-  // Empty when = global, overlaps every context.
-  if (!a || !b) {
-    return true
-  }
-
-  const left = parseWhenRequirements(a)
-  const right = parseWhenRequirements(b)
-
-  if (requirementsContradict(left, right)) {
-    return false
-  }
-
-  // This intentionally avoids a full VS Code when-clause parser. If two
-  // same-key bindings share a positive context token and don't explicitly
-  // contradict each other, they can fire together in that context.
-  for (const token of left.required) {
-    if (right.required.has(token)) {
-      return true
-    }
-  }
-
-  return false
-}
-
-// VS Code allows multiple bindings on the same key as long as their `when`
-// clauses don't overlap. We flag a conflict when the contexts overlap but
-// the bindings differ — e.g. existing `terminalFocus` cmd+c overlaps with
-// our `terminalFocus && terminalTextSelected`, so the existing binding
-// would shadow ours when text isn't selected.
-function bindingsConflict(existing: Keybinding, target: Keybinding): boolean {
-  if (existing.key !== target.key) {
-    return false
-  }
-
-  if (!whensOverlap(existing.when ?? '', target.when ?? '')) {
-    return false
-  }
-
-  return !sameBinding(existing, target)
-}
-
 async function backupFile(filePath: string, ops: FileOps): Promise<void> {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
   await ops.copyFile(filePath, `${filePath}.backup.${stamp}`)
@@ -335,10 +240,10 @@ export async function configureTerminalKeybindings(
       }
     }
 
-    const targets = targetBindings(platform)
-
-    const conflicts = targets.filter(target =>
-      keybindings.some(existing => isKeybinding(existing) && bindingsConflict(existing, target))
+    const conflicts = TARGET_BINDINGS.filter(target =>
+      keybindings.some(
+        existing => isKeybinding(existing) && existing.key === target.key && !sameBinding(existing, target)
+      )
     )
 
     if (conflicts.length) {
@@ -351,7 +256,7 @@ export async function configureTerminalKeybindings(
 
     let added = 0
 
-    for (const target of targets.slice().reverse()) {
+    for (const target of TARGET_BINDINGS.slice().reverse()) {
       const exists = keybindings.some(existing => isKeybinding(existing) && sameBinding(existing, target))
 
       if (!exists) {
@@ -435,7 +340,7 @@ export async function shouldPromptForTerminalSetup(options?: {
       return true
     }
 
-    return targetBindings(platform).some(
+    return TARGET_BINDINGS.some(
       target => !parsed.some(existing => isKeybinding(existing) && sameBinding(existing, target))
     )
   } catch {

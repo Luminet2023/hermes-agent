@@ -3,10 +3,9 @@ import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { STARTUP_RESUME_ID } from '../config/env.js'
-import { FULL_RENDER_TAIL_ITEMS, MAX_HISTORY, WHEEL_SCROLL_STEP } from '../config/limits.js'
-import { SECTION_NAMES, sectionMode } from '../domain/details.js'
+import { MAX_HISTORY, WHEEL_SCROLL_STEP } from '../config/limits.js'
 import { attachedImageNotice, imageTokenMeta } from '../domain/messages.js'
-import { fmtCwdBranch, shortCwd } from '../domain/paths.js'
+import { fmtCwdBranch } from '../domain/paths.js'
 import { type GatewayClient } from '../gatewayClient.js'
 import type {
   ClarifyRespondResponse,
@@ -238,68 +237,7 @@ export function useMainApp(gw: GatewayClient) {
     [historyItems, messageId]
   )
 
-  const detailsLayoutKey = useMemo(() => {
-    const thinking = sectionMode('thinking', ui.detailsMode, ui.sections, ui.detailsModeCommandOverride)
-    const tools = sectionMode('tools', ui.detailsMode, ui.sections, ui.detailsModeCommandOverride)
-
-    return `${thinking}:${tools}`
-  }, [ui.detailsMode, ui.detailsModeCommandOverride, ui.sections])
-
-  const detailsVisible = detailsLayoutKey !== 'hidden:hidden'
-  const userPromptWidth = composerPromptWidth(ui.theme.brand.prompt)
-  const heightCacheKey = `${ui.sid ?? 'draft'}:${cols}:${userPromptWidth}:${ui.compact ? '1' : '0'}:${detailsLayoutKey}`
-
-  const heightCache = useMemo(() => {
-    let cache = heightCachesRef.current.get(heightCacheKey)
-
-    if (!cache) {
-      cache = new Map()
-      heightCachesRef.current.set(heightCacheKey, cache)
-
-      if (heightCachesRef.current.size > MAX_HEIGHT_CACHE_BUCKETS) {
-        heightCachesRef.current.delete(heightCachesRef.current.keys().next().value!)
-      }
-    }
-
-    return cache
-  }, [heightCacheKey])
-
-  // Index of the first user-role message — separator-rendering in
-  // appLayout.tsx skips this row, so the height estimator must skip it
-  // too. -1 when no user message exists yet (no row will gate true).
-  const firstUserIdx = useMemo(() => virtualRows.findIndex(r => r.msg.role === 'user'), [virtualRows])
-
-  const estimateRowHeight = useCallback(
-    (index: number) =>
-      estimatedMsgHeight(virtualRows[index]!.msg, cols, {
-        compact: ui.compact,
-        details: detailsVisible,
-        limitHistory: index < virtualRows.length - FULL_RENDER_TAIL_ITEMS,
-        userPrompt: ui.theme.brand.prompt,
-        withSeparator: virtualRows[index]!.msg.role === 'user' && firstUserIdx >= 0 && index > firstUserIdx
-      }),
-    [cols, detailsVisible, firstUserIdx, ui.compact, ui.theme.brand.prompt, virtualRows]
-  )
-
-  const syncHeightCache = useCallback(
-    (heights: ReadonlyMap<string, number>) => {
-      for (const row of virtualRows) {
-        const h = heights.get(row.key)
-
-        if (h) {
-          heightCache.set(row.key, h)
-        }
-      }
-    },
-    [heightCache, virtualRows]
-  )
-
-  const virtualHistory = useVirtualHistory(scrollRef, virtualRows, cols, {
-    estimateHeight: estimateRowHeight,
-    initialHeights: heightCache,
-    liveTailActive: turnLiveTailActive,
-    onHeightsChange: syncHeightCache
-  })
+  const virtualHistory = useVirtualHistory(scrollRef, virtualRows, cols)
 
   const scrollWithSelection = useCallback(
     (delta: number) => scrollWithSelectionBy(delta, { scrollRef, selection }),
@@ -400,6 +338,8 @@ export function useMainApp(gw: GatewayClient) {
       setTurnStartedAt(null)
     }
   }, [ui.busy])
+
+  useConfigSync({ gw, setBellOnComplete, setVoiceEnabled, sid: ui.sid })
 
   useConfigSync({ gw, setBellOnComplete, setVoiceEnabled, setVoiceRecordKey, sid: ui.sid })
 
@@ -558,7 +498,6 @@ export function useMainApp(gw: GatewayClient) {
   const onEvent = useMemo(
     () =>
       createGatewayEventHandler({
-        composer: { setInput: composerActions.setInput },
         gateway,
         session: {
           STARTUP_RESUME_ID,
@@ -580,8 +519,6 @@ export function useMainApp(gw: GatewayClient) {
     [
       appendMessage,
       bellOnComplete,
-      clearSelection,
-      composerActions.setInput,
       gateway,
       panel,
       session.newSession,
@@ -819,9 +756,7 @@ export function useMainApp(gw: GatewayClient) {
       statusColor: statusColorOf(ui.status, ui.theme.color),
       stickyPrompt,
       turnStartedAt: ui.sid ? turnStartedAt : null,
-      // CLI parity: the classic prompt_toolkit status bar shows a red dot
-      // on REC (cli.py:_get_voice_status_fragments line 2344).
-      voiceLabel: voiceRecording ? '● REC' : voiceProcessing ? '◉ STT' : `voice ${voiceEnabled ? 'on' : 'off'}`
+      voiceLabel: voiceRecording ? 'REC' : voiceProcessing ? 'STT' : `voice ${voiceEnabled ? 'on' : 'off'}`
     }),
     [
       cwd,

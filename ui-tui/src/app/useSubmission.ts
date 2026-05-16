@@ -1,6 +1,5 @@
 import { type MutableRefObject, useCallback, useEffect, useRef } from 'react'
 
-import { TYPING_IDLE_MS } from '../config/timing.js'
 import { attachedImageNotice } from '../domain/messages.js'
 import { looksLikeSlashCommand } from '../domain/slash.js'
 import type { GatewayClient } from '../gatewayClient.js'

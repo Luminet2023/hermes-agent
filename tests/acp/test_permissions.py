@@ -142,70 +142,17 @@ class TestApprovalBridge:
         scheduled["coro"].close()
 
         assert result == "deny"
-        assert scheduled["loop"] is loop
-        assert future.cancel.call_count == 1
 
-    def test_none_response_returns_deny(self):
-        """When request_permission resolves to None, the callback returns 'deny'."""
+    def test_approval_none_response_returns_deny(self):
+        """When request_permission resolves to None, the callback should return 'deny'."""
         loop = MagicMock(spec=asyncio.AbstractEventLoop)
-        request_permission = AsyncMock(name="request_permission")
+        mock_rp = MagicMock(name="request_permission")
+
         future = MagicMock(spec=Future)
         future.result.return_value = None
 
-        scheduled = {}
-
-        def _schedule(coro, passed_loop):
-            scheduled["coro"] = coro
-            scheduled["loop"] = passed_loop
-            return future
-
-        with patch("agent.async_utils.asyncio.run_coroutine_threadsafe", side_effect=_schedule):
-            cb = make_approval_callback(request_permission, loop, session_id="s1", timeout=1.0)
+        with patch("acp_adapter.permissions.asyncio.run_coroutine_threadsafe", return_value=future):
+            cb = make_approval_callback(mock_rp, loop, session_id="s1", timeout=1.0)
             result = cb("echo hi", "demo")
 
-        scheduled["coro"].close()
-
         assert result == "deny"
-
-
-# ---------------------------------------------------------------------------
-# Scheduler-failure regression
-# ---------------------------------------------------------------------------
-
-import gc  # noqa: E402
-import warnings  # noqa: E402
-
-
-class TestSchedulerFailure:
-    def test_scheduler_failure_closes_permission_coroutine(self):
-        """If run_coroutine_threadsafe raises, the coro is closed and we return 'deny'."""
-        loop = MagicMock(spec=asyncio.AbstractEventLoop)
-        created = {"coro": None}
-
-        async def _response_coro(**kwargs):
-            return _make_response(AllowedOutcome(option_id="allow_once", outcome="selected"))
-
-        def _request_permission(**kwargs):
-            created["coro"] = _response_coro(**kwargs)
-            return created["coro"]
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            with patch(
-                "agent.async_utils.asyncio.run_coroutine_threadsafe",
-                side_effect=RuntimeError("scheduler down"),
-            ):
-                cb = make_approval_callback(_request_permission, loop, session_id="s1", timeout=0.01)
-                result = cb("rm -rf /", "dangerous")
-            gc.collect()
-
-        assert result == "deny"
-        assert created["coro"] is not None
-        assert created["coro"].cr_frame is None
-        runtime_warnings = [
-            w for w in caught
-            if issubclass(w.category, RuntimeWarning)
-            and "was never awaited" in str(w.message)
-            and "_response_coro" in str(w.message)
-        ]
-        assert runtime_warnings == []

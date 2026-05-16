@@ -466,10 +466,7 @@ class TestFetchEndpointModelMetadataLmStudio:
                     {
                         "key": "lmstudio-community/Qwen3.5-27B-GGUF/Qwen3.5-27B-Q8_0.gguf",
                         "id": "lmstudio-community/Qwen3.5-27B-GGUF/Qwen3.5-27B-Q8_0.gguf",
-                        "max_context_length": 1_048_576,
-                        "loaded_instances": [
-                            {"config": {"context_length": 131072}}
-                        ],
+                        "max_context_length": 131072,
                     }
                 ]
             }

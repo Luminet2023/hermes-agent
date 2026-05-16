@@ -1203,7 +1203,6 @@ class TestBuildApiKwargs:
         assert "temperature" not in kwargs
 
     def test_kimi_coding_endpoint_omits_temperature(self, agent):
-        agent.provider = "kimi-coding"
         agent.base_url = "https://api.kimi.com/coding/v1"
         agent._base_url_lower = agent.base_url.lower()
         agent.model = "kimi-k2.5"
@@ -1216,7 +1215,6 @@ class TestBuildApiKwargs:
     def test_kimi_coding_endpoint_sends_max_tokens_and_reasoning(self, agent):
         """Kimi endpoint should send max_tokens=32000 and reasoning_effort as
         top-level params, matching Kimi CLI's default behavior."""
-        agent.provider = "kimi-coding"
         agent.base_url = "https://api.kimi.com/coding/v1"
         agent._base_url_lower = agent.base_url.lower()
         agent.model = "kimi-for-coding"
@@ -1229,7 +1227,6 @@ class TestBuildApiKwargs:
 
     def test_kimi_coding_endpoint_respects_custom_effort(self, agent):
         """reasoning_effort should reflect reasoning_config.effort when set."""
-        agent.provider = "kimi-coding"
         agent.base_url = "https://api.kimi.com/coding/v1"
         agent._base_url_lower = agent.base_url.lower()
         agent.model = "kimi-for-coding"
@@ -1243,7 +1240,6 @@ class TestBuildApiKwargs:
     def test_kimi_coding_endpoint_sends_thinking_extra_body(self, agent):
         """Kimi endpoint should send extra_body.thinking={"type":"enabled"}
         to activate reasoning mode, mirroring Kimi CLI's with_thinking()."""
-        agent.provider = "kimi-coding"
         agent.base_url = "https://api.kimi.com/coding/v1"
         agent._base_url_lower = agent.base_url.lower()
         agent.model = "kimi-for-coding"
@@ -1257,7 +1253,6 @@ class TestBuildApiKwargs:
         """When reasoning_config.enabled=False, thinking should be disabled
         and reasoning_effort should be omitted entirely — mirroring Kimi
         CLI's with_thinking("off") which maps to reasoning_effort=None."""
-        agent.provider = "kimi-coding"
         agent.base_url = "https://api.kimi.com/coding/v1"
         agent._base_url_lower = agent.base_url.lower()
         agent.model = "kimi-for-coding"
@@ -1271,7 +1266,6 @@ class TestBuildApiKwargs:
 
     def test_moonshot_endpoint_sends_max_tokens_and_reasoning(self, agent):
         """api.moonshot.ai should get the same Kimi-compatible params."""
-        agent.provider = "kimi-coding"
         agent.base_url = "https://api.moonshot.ai/v1"
         agent._base_url_lower = agent.base_url.lower()
         agent.model = "kimi-k2.5"
@@ -1285,7 +1279,6 @@ class TestBuildApiKwargs:
 
     def test_moonshot_cn_endpoint_sends_max_tokens_and_reasoning(self, agent):
         """api.moonshot.cn (China endpoint) should get the same params."""
-        agent.provider = "kimi-coding-cn"
         agent.base_url = "https://api.moonshot.cn/v1"
         agent._base_url_lower = agent.base_url.lower()
         agent.model = "kimi-k2.5"
@@ -2527,6 +2520,30 @@ class TestRunConversation:
         assert all("message_count" in c and isinstance(c.get("request_messages"), list) for c in pre_request_calls)
         assert any(msg.get("role") == "user" and msg.get("content") == "search something" for msg in pre_request_calls[0]["request_messages"])
         assert all("usage" in c and "response" in c and "assistant_message" in c for c in post_request_calls)
+
+    def test_content_with_tool_calls_stays_silent_for_non_cli_quiet_mode(self, agent):
+        self._setup_agent(agent)
+        agent.platform = None
+        tc = _mock_tool_call(name="web_search", arguments="{}", call_id="c1")
+        resp1 = _mock_response(
+            content="I'll search for that.",
+            finish_reason="tool_calls",
+            tool_calls=[tc],
+        )
+        resp2 = _mock_response(content="Done searching", finish_reason="stop")
+        agent.client.chat.completions.create.side_effect = [resp1, resp2]
+
+        with (
+            patch("run_agent.handle_function_call", return_value="search result"),
+            patch.object(agent, "_safe_print") as mock_print,
+            patch.object(agent, "_persist_session"),
+            patch.object(agent, "_save_trajectory"),
+            patch.object(agent, "_cleanup_task_resources"),
+        ):
+            result = agent.run_conversation("search something")
+
+        assert result["final_response"] == "Done searching"
+        mock_print.assert_not_called()
 
     def test_content_with_tool_calls_stays_silent_for_non_cli_quiet_mode(self, agent):
         self._setup_agent(agent)
