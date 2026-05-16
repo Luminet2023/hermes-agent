@@ -1167,6 +1167,7 @@ class SessionDB:
         offset: int = 0,
         include_children: bool = False,
         project_compression_tips: bool = True,
+        order_by_last_active: bool = False,
     ) -> List[Dict[str, Any]]:
         """List sessions with preview (first user message) and last active timestamp.
 
@@ -2954,4 +2955,3 @@ class SessionDB:
                 (error[:500], session_id),
             )
         self._execute_write(_do)
-

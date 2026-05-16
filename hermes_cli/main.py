@@ -5459,6 +5459,31 @@ def cmd_webhook(args):
     webhook_command(args)
 
 
+def cmd_slack(args):
+    """Slack integration helpers."""
+    sub = getattr(args, "slack_command", None)
+    if sub in {None, ""}:
+        print(
+            "usage: hermes slack <subcommand>\n"
+            "\n"
+            "subcommands:\n"
+            "  manifest   Generate a Slack app manifest with every gateway\n"
+            "             command registered as a native slash\n"
+            "\n"
+            "Run `hermes slack manifest -h` for details.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if sub == "manifest":
+        from hermes_cli.slack_cli import slack_manifest_command
+
+        return slack_manifest_command(args)
+
+    print(f"Unknown slack subcommand: {sub}", file=sys.stderr)
+    return 1
+
+
 def cmd_hooks(args):
     """Shell-hook inspection and management."""
     from hermes_cli.hooks import hooks_command
@@ -5727,6 +5752,13 @@ def _build_web_ui(web_dir: Path, *, fatal: bool = False) -> bool:
 
     Returns True if the build succeeded or was skipped (no package.json).
     """
+    def _say(text: str) -> None:
+        try:
+            print(text)
+        except UnicodeEncodeError:
+            encoding = getattr(sys.stdout, "encoding", None) or "ascii"
+            print(text.encode(encoding, errors="replace").decode(encoding, errors="replace"))
+
     if not (web_dir / "package.json").exists():
         return True
 
@@ -9528,6 +9560,46 @@ def main():
         _cleanup_quarantined_exes()
     except Exception:
         pass
+
+    parser = argparse.ArgumentParser(
+        prog="hermes",
+        description="Hermes Agent - AI assistant with tool-calling capabilities",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+    hermes                        Start interactive chat
+    hermes chat -q "Hello"        Single query mode
+    hermes -c                     Resume the most recent session
+    hermes -c "my project"        Resume a session by name (latest in lineage)
+    hermes --resume <session_id>  Resume a specific session by ID
+    hermes setup                  Run setup wizard
+    hermes logout                 Clear stored authentication
+    hermes auth add <provider>    Add a pooled credential
+    hermes auth list              List pooled credentials
+    hermes auth remove <p> <t>    Remove pooled credential by index, id, or label
+    hermes auth reset <provider>  Clear exhaustion status for a provider
+    hermes model                  Select default model
+    hermes config                 View configuration
+    hermes config edit            Edit config in $EDITOR
+    hermes config set model gpt-4 Set a config value
+    hermes gateway                Run messaging gateway
+    hermes -s hermes-agent-dev,github-auth
+    hermes -w                     Start in isolated git worktree
+    hermes gateway install        Install gateway background service
+    hermes sessions list          List past sessions
+    hermes sessions browse        Interactive session picker
+    hermes sessions rename ID T   Rename/title a session
+    hermes logs                   View agent.log (last 50 lines)
+    hermes logs -f                Follow agent.log in real time
+    hermes logs errors            View errors.log
+    hermes logs --since 1h        Lines from the last hour
+    hermes debug share            Upload debug report for support
+    hermes update                 Update to latest version
+
+For more help on a command:
+    hermes <command> --help
+""",
+    )
 
     parser.add_argument(
         "--version", "-V", action="store_true", help="Show version and exit"
