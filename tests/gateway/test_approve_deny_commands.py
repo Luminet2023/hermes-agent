@@ -173,6 +173,23 @@ class TestBlockingGatewayApproval:
         assert e1.event.is_set()
         assert e2.event.is_set()
 
+    def test_clear_session_denies_and_signals_all_entries(self):
+        """clear_session must wake blocked entries during boundary cleanup."""
+        from tools.approval import clear_session, _ApprovalEntry, _gateway_queues
+
+        session_key = "test-boundary-cleanup"
+        e1 = _ApprovalEntry({"command": "cmd1"})
+        e2 = _ApprovalEntry({"command": "cmd2"})
+        _gateway_queues[session_key] = [e1, e2]
+
+        clear_session(session_key)
+
+        assert e1.event.is_set()
+        assert e2.event.is_set()
+        assert e1.result == "deny"
+        assert e2.result == "deny"
+        assert session_key not in _gateway_queues
+
 
 # ------------------------------------------------------------------
 # /approve command
@@ -236,25 +253,6 @@ class TestApproveCommand:
         assert "session" in result.lower()
         assert e1.result == "session"
         assert e2.result == "session"
-
-    @pytest.mark.asyncio
-    async def test_approve_session_rejected_for_one_shot_operation_approval(self):
-        from tools.approval import _ApprovalEntry, _gateway_queues
-
-        runner = _make_runner()
-        source = _make_source()
-        session_key = runner._session_key_for_source(source)
-
-        entry = _ApprovalEntry({
-            "command": "switch task demo from docker to host/local execution",
-            "description": "Allow this task to leave Docker and run on the host.",
-            "choices": ["once", "deny"],
-        })
-        _gateway_queues[session_key] = [entry]
-
-        result = await runner._handle_approve_command(_make_event("/approve session"))
-        assert "only allows" in result.lower()
-        assert not entry.event.is_set()
 
     @pytest.mark.asyncio
     async def test_approve_no_pending(self):
@@ -449,19 +447,15 @@ class TestBlockingApprovalE2E:
                 os.environ.pop("HERMES_SESSION_KEY", None)
                 reset_current_session_key(token)
 
-        with patch(
-            "tools.tirith_security.check_command_security",
-            return_value={"action": "allow", "findings": [], "summary": ""},
-        ):
-            t = threading.Thread(target=agent_thread)
-            t.start()
-            for _ in range(50):
-                if notified:
-                    break
-                time.sleep(0.05)
+        t = threading.Thread(target=agent_thread)
+        t.start()
+        for _ in range(50):
+            if notified:
+                break
+            time.sleep(0.05)
 
-            resolve_gateway_approval(session_key, "deny")
-            t.join(timeout=5)
+        resolve_gateway_approval(session_key, "deny")
+        t.join(timeout=5)
 
         assert result_holder[0]["approved"] is False
         assert "BLOCKED" in result_holder[0]["message"]
@@ -498,13 +492,9 @@ class TestBlockingApprovalE2E:
                 os.environ.pop("HERMES_SESSION_KEY", None)
                 reset_current_session_key(token)
 
-        with patch(
-            "tools.tirith_security.check_command_security",
-            return_value={"action": "allow", "findings": [], "summary": ""},
-        ):
-            t = threading.Thread(target=agent_thread)
-            t.start()
-            t.join(timeout=10)
+        t = threading.Thread(target=agent_thread)
+        t.start()
+        t.join(timeout=10)
 
         assert result_holder[0]["approved"] is False
         assert "timed out" in result_holder[0]["message"]
@@ -546,28 +536,24 @@ class TestBlockingApprovalE2E:
             threading.Thread(target=make_agent(1, "rm -rf /b")),
             threading.Thread(target=make_agent(2, "rm -rf /c")),
         ]
-        with patch(
-            "tools.tirith_security.check_command_security",
-            return_value={"action": "allow", "findings": [], "summary": ""},
-        ):
-            for t in threads:
-                t.start()
+        for t in threads:
+            t.start()
 
-            # Wait for all 3 to block
-            for _ in range(100):
-                if len(notified) >= 3:
-                    break
-                time.sleep(0.05)
+        # Wait for all 3 to block
+        for _ in range(100):
+            if len(notified) >= 3:
+                break
+            time.sleep(0.05)
 
-            assert len(notified) == 3
-            assert len(_gateway_queues.get(session_key, [])) == 3
+        assert len(notified) == 3
+        assert len(_gateway_queues.get(session_key, [])) == 3
 
-            # Approve all at once
-            count = resolve_gateway_approval(session_key, "session", resolve_all=True)
-            assert count == 3
+        # Approve all at once
+        count = resolve_gateway_approval(session_key, "session", resolve_all=True)
+        assert count == 3
 
-            for t in threads:
-                t.join(timeout=5)
+        for t in threads:
+            t.join(timeout=5)
 
         assert all(r is not None for r in results)
         assert all(r["approved"] is True for r in results)
@@ -606,29 +592,25 @@ class TestBlockingApprovalE2E:
             threading.Thread(target=make_agent(0, "rm -rf /x")),
             threading.Thread(target=make_agent(1, "rm -rf /y")),
         ]
-        with patch(
-            "tools.tirith_security.check_command_security",
-            return_value={"action": "allow", "findings": [], "summary": ""},
-        ):
-            for t in threads:
-                t.start()
+        for t in threads:
+            t.start()
 
-            # Wait for both threads to register pending approvals instead of
-            # relying on a fixed sleep.  The approval module stores entries in
-            # _gateway_queues[session_key] — poll until we see 2 entries.
-            from tools.approval import _gateway_queues
-            deadline = time.monotonic() + 5
-            while time.monotonic() < deadline:
-                if len(_gateway_queues.get(session_key, [])) >= 2:
-                    break
-                time.sleep(0.05)
+        # Wait for both threads to register pending approvals instead of
+        # relying on a fixed sleep.  The approval module stores entries in
+        # _gateway_queues[session_key] — poll until we see 2 entries.
+        from tools.approval import _gateway_queues
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if len(_gateway_queues.get(session_key, [])) >= 2:
+                break
+            time.sleep(0.05)
 
-            # Approve first, deny second
-            resolve_gateway_approval(session_key, "once")   # oldest
-            resolve_gateway_approval(session_key, "deny")   # next
+        # Approve first, deny second
+        resolve_gateway_approval(session_key, "once")   # oldest
+        resolve_gateway_approval(session_key, "deny")   # next
 
-            for t in threads:
-                t.join(timeout=5)
+        for t in threads:
+            t.join(timeout=5)
 
         assert all(r is not None for r in results)
         assert sorted(r["approved"] for r in results) == [False, True]
